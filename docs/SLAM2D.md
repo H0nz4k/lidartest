@@ -75,6 +75,63 @@ lze přidat vizuální odometrii pro korekci X/Y, ale vyžádá si
 synchronizaci kamerových snímků s LiDARem a kalibraci extrinsik.
 Tato implementace žádnou kameru neotevírá.
 
+## Rychlejší zpracování a časové sladění senzorů (12. 11. 2026)
+
+Předchozí `slam_server.py` **záměrně propouštěl nejvýše jeden
+dokončený sken za 240 ms**, tedy maximálně 4,17 skenu/s,
+i když skutečný LiDAR běžel přibližně **10,6–10,8 otáček/s**.
+Tato pevná brzda je **odstraněná**.
+
+Nový postup:
+
+- Čtečka UART zmenšila blok z 2048 B na 256 B a timeout na 50 ms
+  (na 115200 baud se 256 B typicky přijímá přibližně 22 ms).
+- Každá dokončená 360° otáčka se časově označí
+  `time.monotonic()` při přijetí rámce s přechodem přes 0°.
+- Gyro Z (cca 100 Hz) a kamera (cca 10 fps) si uchovávají
+  krátkou omezenou časovou historii; ke skenu se přiřadí senzorový
+  vzorek **ze stejného času**, interpolovaný jen v rámci stejné
+  kalibrační session a bezpečného časového odstupu.
+- Při výpadku IMU, překalibraci, ztrátě snímků nebo příliš starých
+  údajích se nevymýšlí pohyb a SLAM použije dostupné senzory.
+- 8prvková omezená fronta odděluje příjem UART od náročného
+  scan matchingu. **Pevný gate už nesnižuje počet skenů.** Pokud
+  CPU nedokáže všechny otáčky včas zpracovat, zahodí se
+  **nejstarší čekající sken** a přesně se počítají ztráty přetížením.
+- Web `/` a JSON `/api/slam` zobrazují skutečné
+  **LiDAR skenů/s**, **Zpracováno/s**, stav fronty, počet
+  zahozených skenů, dobu výpočtu a celkovou latenci.
+  U IMU/kamery také zobrazí rozdíl časové značky
+  senzoru vůči okamžiku ukončení LiDAR otáčky (ms).
+
+**Důležité:** číslo `LiDAR skenů/s` nyní ukazuje, kolik plných
+360° skenů skutečně přišlo; `Zpracováno/s` kolik
+stihl mapovací worker. Při pomalém CPU mohou být hodnoty různé.
+`Ztráty přetížením` jsou skutečně zahozené **celé skeny** ve
+frontě, ne CRC chyby jednotlivých UART rámců.
+
+Jde o **softwarovou synchronizaci času přijetí**, ne hardwarové
+časování. Zpoždění USB-UART, kamera pipeline a postupně snímané
+body během otáčky stále přidávají nejistotu; **de-skew jednotlivých
+paprsků ani kalibrace časového offsetu** nejsou hotové.
+Samotná vyšší frekvence skenů automaticky nezajistí přesnější mapu.
+Po prvním provozním testu na RPi4 sledovat FPS a případné ztráty a
+teprve podle výsledků optimalizovat výpočetně náročný scan matcher.
+
+### Aktualizace pro RPi4
+
+Předchozí `slam_server.py` ukonči pomocí Ctrl+C (nepoužívat současně
+dva čteče `/dev/ttyUSB0`), pak:
+
+~~~bash
+cd /opt/lidartest && git pull
+sudo python3 tools/slam_server.py --imu --camera --camera-preview
+~~~
+
+Prvních 2,5 s nech skener bez pohybu kvůli nulování gyra.
+Pro web s živou kamerou `http://IP_RPI4:8766/camera`,
+pro diagnostiku rychlosti a synchronizace `http://IP_RPI4:8766/`.
+
 ## Jak mapovat
 
 1. LiDAR upevnit vodorovně na stabilní podstavec; **nechytat rotující hlavu**.
