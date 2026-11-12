@@ -149,6 +149,26 @@ Web: **http://IP_RPI4:8766/camera**; stránka SLAM: `/`,
 nevystavovat internetové veřejnosti. Kamera nadále nesmí být
 současně používaná ProjectionLabem.
 
+## Rychlé skeny a časová synchronizace (aktualizace 12. 11. 2026)
+
+Pevný limit **1 sken / 240 ms** je odstraněn. Všechny kompletní
+360° otáčky od LiDARu se nyní předávají do omezené fronty,
+přičemž se měří případná ztráta při přetížení CPU.
+UART používá 256B bloky pro menší zpoždění; gyro MPU-6050
+a kamera mají časově označenou historii a připojují se k
+**časové značce konkrétní LiDAR otáčky**.
+
+Nová webová diagnostika na `/` i `/camera` ukazuje vstupní
+a zpracované skeny za sekundu, ztráty fronty a časové sladění
+IMU/CSI. Přínos na skutečném Raspberry Pi 4 se teprve ověří;
+jde o časování přijetí dat, **nikoli o hardwarovou synchronizaci
+nebo 3D de-skew**. Podrobnosti: [docs/SLAM2D.md](docs/SLAM2D.md).
+
+~~~bash
+cd /opt/lidartest && git pull
+sudo python3 tools/slam_server.py --imu --camera --camera-preview
+~~~
+
 ## Tři senzory: LiDAR + MPU-6050 + CSI kamera
 
 **Nově připraveno** volitelné propojení CSI kamery do experimentálního
