@@ -12,12 +12,16 @@ import statistics
 import threading
 import time
 
+from sensor_sync import TimedHistory
+
 
 class ImuAngleTracker:
     """Thread-safe stav azimutu a zdravotního stavu IMU."""
 
     def __init__(self):
         self.lock = threading.RLock()
+        self.history = TimedHistory(capacity=650)
+        self._session = 0
         self._ready = False
         self._last_time = None
         self._heading_rad = 0.0
@@ -31,6 +35,8 @@ class ImuAngleTracker:
         if now is None:
             now = time.monotonic()
         with self.lock:
+            self.history.clear()
+            self._session += 1
             self._bias_dps = float(bias_dps)
             self._noise_dps = float(noise_dps)
             self._heading_rad = 0.0
@@ -54,13 +60,28 @@ class ImuAngleTracker:
                 self._heading_rad += math.radians(velocity) * dt
             self._speed_dps = velocity
             self._samples += 1
+            self.history.add(float(now), {
+                "heading_deg": math.degrees(self._heading_rad),
+                "rate_dps": velocity, "session": self._session,
+            })
 
     def set_error(self, reason):
         with self.lock:
             self._ready = False
+            self.history.clear()
             self._speed_dps = 0.0
             self._last_time = None
             self._error = str(reason)
+
+    def sample_at(self, timestamp, max_age=0.10):
+        """Yaw přesněji přiřazený ke konci LiDAR otáčky.
+
+        Během chyby I²C/kalibrace vrací None. Pouze software timestamp.
+        """
+        with self.lock:
+            if not self._ready:
+                return None
+            return self.history.at(timestamp, max_age=max_age, max_gap=0.12)
 
     def snapshot(self, max_age=0.4):
         now = time.monotonic()
@@ -74,6 +95,7 @@ class ImuAngleTracker:
                 "bias_dps": round(self._bias_dps, 3) if self._samples else None,
                 "noise_dps": round(self._noise_dps, 3) if self._samples else None,
                 "samples": self._samples,
+                "session": self._session,
                 "error": "" if ready else (self._error or "IMU neodpovídá."),
             }
 
