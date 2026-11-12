@@ -130,6 +130,39 @@ vizuální odometrií a korekcí translačního pohybu.
 Dokumentace: [MPU-6050](docs/MPU6050.md) a
 [SLAM + IMU](docs/SLAM2D.md). Test IMU: [imu_test.py](tools/imu_test.py).
 
+## Tři senzory: LiDAR + MPU-6050 + CSI kamera
+
+**Nově připraveno** volitelné propojení CSI kamery do experimentálního
+2D SLAMu – optický tok, sledování obrazových bodů, stav dostupnosti
+kamery, vizuální změna natočení při pohledu kolmo dolů a volitelná
+metrická XY predikce pouze po kalibraci měřítka. Kamera je **standardně
+vypnutá**: na RPi4 může být využívaná ProjectionLabem a žádný proces
+nebude automaticky ukončen, kamera se nebude násilně přebírat.
+
+**Nejdříve diagnostika kamery bez jejího vlivu na SLAM:**
+
+~~~bash
+sudo apt install -y python3-opencv python3-picamera2
+cd /opt/lidartest && git pull
+sudo python3 tools/slam_server.py --imu --camera
+~~~
+
+**Pouze pro kameru namířenou přímo dolů:**
+
+~~~bash
+sudo python3 /opt/lidartest/tools/slam_server.py --imu --camera --camera-downward
+~~~
+
+Bez znalosti měřítka, výšky a natočení kamery není metrický
+posun X/Y z jedné kamery spolehlivý; výchozí stav proto používá
+pouze LiDAR a gyro, kamera jen sleduje obraz. Pro fyzicky
+kalibrované X/Y existuje parametr `--camera-scale`, ale zatím
+jej **nepoužívej bez kalibrace**. Podrobnosti:
+[**docs/CAMERA_SLAM.md**](docs/CAMERA_SLAM.md).
+
+**Stav:** offline testy Python/OpenCV, falešné posuny a rotace obrazu.
+Reálný současný běh LiDAR + IMU + kamera **dosud neověřen**.
+
 ## Další kroky
 
 1. Naměřit napětí na vstupním `+`/GND přímo u LiDARu pod zátěží (ověřit skutečných ~5 V).
