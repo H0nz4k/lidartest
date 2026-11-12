@@ -38,6 +38,7 @@ class Slam2D:
             self.last_scan = []
             # Heading z IMU vždy vztahujeme k poslednímu přijatému skenu.
             self.imu_anchor_deg = None
+            self.imu_anchor_session = None
             self.imu_used = False
             self.imu_delta_deg = 0.0
             self.visual_anchor = None
@@ -171,7 +172,8 @@ class Slam2D:
                     cy += stepy
             self.grid[ey, ex] = min(12, int(self.grid[ey, ex]) + 5)
 
-    def process_scan(self, scan, imu_heading_deg=None, visual=None, camera_yaw_offset_deg=0.0):
+    def process_scan(self, scan, imu_heading_deg=None, visual=None, camera_yaw_offset_deg=0.0,
+                     imu_session=None):
         """Integrace jednoho skenu. IMU heading = relativní gyro Z [°].
 
         IMU a volitelná vizuální odometrie z kamery jsou pouze priory
@@ -199,12 +201,13 @@ class Slam2D:
                 self.accepted += 1
                 self.quality = 10.0
                 self.imu_anchor_deg = imu_heading
+                self.imu_anchor_session = imu_session
                 self.visual_anchor = visual_data
                 return True
 
             # Po výpadku IMU nesmíme integrovat neznámé otočení:
             # první návrat IMU pouze synchronizuje referenci.
-            if imu_heading is None:
+            if imu_heading is None or imu_session != self.imu_anchor_session:
                 self.imu_anchor_deg = None
             delta = None
             if imu_heading is not None and self.imu_anchor_deg is not None:
@@ -265,6 +268,7 @@ class Slam2D:
             self.visual_delta_deg = round(visual_delta if visual_delta is not None else 0.0, 2)
             self.visual_translation_used = camera_translation is not None
             self.imu_anchor_deg = imu_heading
+            self.imu_anchor_session = imu_session
             self.visual_anchor = visual_data
             self.accepted += 1
             self._integrate(xy)
