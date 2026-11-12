@@ -130,6 +130,7 @@ class VisualOdometry:
             )
             if corners is None or len(corners) < 25:
                 self.features, self.inliers, self.last_good_t = 0, 0, 0.0
+                self.history.clear()
                 self.session += 1
                 return
             nxt, status, _ = cv2.calcOpticalFlowPyrLK(
@@ -138,6 +139,7 @@ class VisualOdometry:
             )
             if nxt is None or status is None:
                 self.features, self.inliers, self.last_good_t = 0, 0, 0.0
+                self.history.clear()
                 self.session += 1
                 return
             ok = status.reshape(-1) == 1
@@ -145,6 +147,7 @@ class VisualOdometry:
             self.features = int(len(p0))
             if len(p0) < 22:
                 self.inliers, self.last_good_t = 0, 0.0
+                self.history.clear()
                 self.session += 1
                 return
 
@@ -154,6 +157,7 @@ class VisualOdometry:
             )
             if mat is None or inlier_mask is None:
                 self.inliers, self.last_good_t = 0, 0.0
+                self.history.clear()
                 self.session += 1
                 return
             self.inliers = int(inlier_mask.sum())
@@ -192,24 +196,26 @@ class VisualOdometry:
                 if self.metres_per_pixel > 0:
                     self.x_m = self.x_px * self.metres_per_pixel
                     self.y_m = self.y_px * self.metres_per_pixel
-                self.history.add(now, {
-                    "heading_deg": self.heading_deg,
-                    "x_m": self.x_m if self.metres_per_pixel > 0 else None,
-                    "y_m": self.y_m if self.metres_per_pixel > 0 else None,
-                    "session": self.session,
-                })
+            # Časový údaj zaznamenávat i při --camera monitor:
+            # dovolí měřit skutečné sladění kamera/LiDAR bez aktivace VO.
+            self.history.add(now, {
+                "heading_deg": self.heading_deg,
+                "x_m": self.x_m if self.downward and self.metres_per_pixel > 0 else None,
+                "y_m": self.y_m if self.downward and self.metres_per_pixel > 0 else None,
+                "session": self.session,
+            })
 
     def sample_at(self, timestamp, max_age=0.18):
-        """Downward VO interpolovaná/přiřazená ke konci LiDAR skenu."""
-        with self.lock:
-            if not self.opened or not self.downward:
-                return None
-            data = self.history.at(timestamp, max_age=max_age, max_gap=0.25)
-            if data is None:
-                return None
-            data.update({"ready": True, "mode": "downward",
-                         "scale_calibrated": self.metres_per_pixel > 0})
-            return data
+        """Snímková časová značka; yaw/XY prior jen při downward."""
+        if not self.opened:
+            return None
+        # Jen krátký zámek historie; neblokovat UART výpočtem OpenCV.
+        data = self.history.at(timestamp, max_age=max_age, max_gap=0.25)
+        if data is None or not self.opened:
+            return None
+        data.update({"ready": self.downward, "mode": "downward" if self.downward else "monitor",
+                     "scale_calibrated": self.downward and self.metres_per_pixel > 0})
+        return data
 
     def snapshot(self, max_age=0.4):
         with self.lock:
