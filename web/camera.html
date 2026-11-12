@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ETA Raggio – kamera + LiDAR</title>
+<style>
+:root{color-scheme:dark;font:16px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;background:#0b1521;color:#e9f7ff}
+*{box-sizing:border-box}body{margin:0}.wrap{max-width:1300px;margin:auto;padding:15px clamp(12px,2vw,28px) 32px}
+header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:15px}
+h1{font-size:clamp(1.25rem,2vw,1.65rem);margin:0}.sub{font-size:.86rem;color:#a1b8ca;margin:4px 0 0}
+nav{display:flex;gap:8px;flex-wrap:wrap}nav a{padding:10px 13px;color:#ccdfed;text-decoration:none;border:1px solid #355168;border-radius:10px;font-size:.86rem}
+nav a[aria-current=page]{background:#114c67;border-color:#2a819f}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(235px,285px);gap:14px;align-items:start}
+.box,.card{background:#142739;border:1px solid #2e4559;border-radius:16px;overflow:hidden}.card{padding:16px}.side{display:grid;gap:13px}
+.stage{position:relative;background:#0c1b2a;aspect-ratio:4/3;overflow:hidden}
+#camera{width:100%;height:100%;display:block;object-fit:contain}
+#overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:auto;cursor:crosshair;touch-action:manipulation}
+.floating{position:absolute;left:10px;top:10px;background:#0a1826d9;border:1px solid #32485e;padding:6px 10px;color:#daf0fc;border-radius:9px;font-size:.78rem;pointer-events:none;max-width:calc(100% - 20px)}
+.legend{display:flex;flex-wrap:wrap;gap:12px;padding:12px 14px;font-size:.82rem;color:#b4ccdb}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+.warn{background:#362d21;border:1px solid #856036;border-radius:12px;padding:12px 14px;color:#f4d8aa;font-size:.84rem;margin:13px 0}
+h2{font-size:.84rem;letter-spacing:.06em;text-transform:uppercase;color:#a0b8ca;margin:0 0 12px}
+.stat{display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid #324759;padding:9px 0;gap:8px}
+.stat span{font-size:.85rem;color:#b5c7d6}.stat strong{font-size:1.08rem;font-variant-numeric:tabular-nums}
+label.range{display:flex;justify-content:space-between;gap:8px;font-size:.87rem;margin-top:12px}label.range b{font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;min-height:28px;accent-color:#69caef}
+.check{display:flex;gap:9px;align-items:center;min-height:44px;font-size:.86rem;color:#d0e1ed}
+.check input{width:19px;height:19px;accent-color:#6bd1ed}
+.status{font-size:.8rem;color:#91acc0}.picked{min-height:48px;font-size:.86rem;color:#bdddeb}
+button{font:inherit;font-weight:650;background:#14526b;color:#e8faff;border:1px solid #3686a2;border-radius:10px;padding:11px;width:100%;min-height:44px;cursor:pointer}
+button:focus-visible,input:focus-visible,nav a:focus-visible{outline:2px solid #9ae4ff;outline-offset:2px}
+footer{font-size:.8rem;color:#91aabc;margin-top:14px}
+@media(max-width:790px){.layout{grid-template-columns:1fr}.side{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.side{grid-template-columns:1fr}.wrap{padding-top:12px}.floating{font-size:.71rem;left:6px;top:6px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+<header>
+<div><h1>Kamera + LiDAR · živý překryv</h1><p class="sub">ETA Raggio · CSI obraz + skutečná vzdálenost · Raspberry Pi 4</p></div>
+<nav aria-label="Režimy"><a href="/">2D SLAM</a><a href="/radar">Živý radar</a><a href="/camera" aria-current="page">Kamera + LiDAR</a></nav>
+</header>
+<div class="layout">
+<section>
+<div class="box">
+<div class="stage">
+<img id="camera" alt="Živý CSI obraz; zobrazí se pouze po výslovném povolení náhledu">
+<canvas id="overlay" width="640" height="480" aria-label="Orientační LiDAR body ve videoobrazu; klepnutím vyberete vzdálenost"></canvas>
+<div class="floating" id="camera-note">Čekám na obraz…</div>
+</div>
+<div class="legend"><span><i class="dot" style="background:#67d5ff"></i>Vzdálenost ≥ 1 m</span><span><i class="dot" style="background:#ffbe75"></i>Vzdálenost &lt; 1 m</span><span><i class="dot" style="background:#8beaaf"></i>Osa kamery – odhad</span></div>
+</div>
+<p class="warn"><b>Pozor – není to kalibrovaná AR projekce.</b> Vzdálenosti jsou skutečná měření LiDARu, jejich souřadnice v obraze jsou pouze hrubá úhlová projekce do jedné vodorovné linie. Pro přesné krytí je nutná kalibrace objektivu a relativní polohy kamery vůči LiDARu. Při naklánění se 2D SLAM mapa může deformovat.</p>
+<p class="status">Kliknutím na barevný bod zobrazíš skutečně naměřenou vzdálenost a úhel daného paprsku. Kamera musí být volná – nepřebíráme ji ProjectionLabu.</p>
+</section>
+<aside class="side">
+<section class="card">
+<h2>Senzory</h2>
+<div class="stat"><span>CSI kamera</span><strong id="camera-state">—</strong></div>
+<div class="stat"><span>LiDAR</span><strong id="lidar-state">—</strong></div>
+<div class="stat"><span>RPM</span><strong id="rpm">—</strong></div>
+<div class="stat"><span>Body ve výhledu</span><strong id="count">0</strong></div>
+<div class="stat"><span>Gyro Z</span><strong id="gyro">—</strong></div>
+<h2 style="margin-top:17px">Vybraný bod</h2>
+<div class="picked" id="selected" aria-live="polite">Klepni na měřený bod v obrazu.</div>
+<p class="status" id="error" aria-live="polite"></p>
+</section>
+<section class="card">
+<h2>Orientační překryv</h2>
+<label class="range" for="heading"><span>Směr středu kamery v LiDARu</span><b id="heading-val">0°</b></label>
+<input id="heading" type="range" min="0" max="359" step="1" value="0">
+<label class="range" for="fov"><span>Odhad horizontálního FOV kamery</span><b id="fov-val">65°</b></label>
+<input id="fov" type="range" min="25" max="110" step="1" value="65">
+<label class="range" for="opacity"><span>Průhlednost bodů</span><b id="opacity-val">75 %</b></label>
+<input id="opacity" type="range" min="10" max="100" step="5" value="75">
+<label class="check"><input id="overlay-enabled" type="checkbox" checked> Zobrazit LiDAR vrstvu</label>
+<label class="check"><input id="show-rays" type="checkbox"> Spojit sousední LiDAR body</label>
+<button id="pause" type="button">Pozastavit zobrazení</button>
+<p class="status">Nastavení pouze přibližně posouvá vrstvu; skutečnou kalibraci kamery nenahrazuje.</p>
+</section>
+</aside>
+</div>
+<footer>Živý obraz je dostupný jen při spuštění s parametrem --camera-preview. JPEG se drží pouze v paměti a web je bez autentizace – použij jen důvěryhodnou lokální síť.</footer>
+</main>
+<script>
+(() => {
+  "use strict";
+  const get = id => document.getElementById(id);
+  const c = get("overlay"), ctx = c.getContext("2d");
+  const image = get("camera");
+  let scan = [], status = null, markers = [], paused = false, loading = false;
+  let stamp = 0, hasImage = false, imageBusy = false;
+  function text(id, value) { get(id).textContent = value; }
+  function fmt(n, decimals=1) { return Number(n).toLocaleString("cs-CZ",{maximumFractionDigits:decimals}); }
+  function angleDiff(a,b) { return ((a-b+540)%360)-180; }
+  function render() {
+    const w=640,h=480, midX=w/2, midY=h*.53;
+    ctx.clearRect(0,0,w,h);
+    markers=[];
+    if(!get("overlay-enabled").checked) return;
+    const heading=Number(get("heading").value), fov=Number(get("fov").value);
+    ctx.globalAlpha=Number(get("opacity").value)/100;
+    ctx.strokeStyle="#8beaaf";ctx.lineWidth=1.5;
+    ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo(midX,0);ctx.lineTo(midX,h);ctx.stroke();ctx.setLineDash([]);
+    ctx.strokeStyle="#79d7ff";ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(0,midY);ctx.lineTo(w,midY);ctx.stroke();
+    const nearby=[];
+    for(const p of scan) {
+      if(!Array.isArray(p)||p.length<3||p[1]<=0)continue;
+      const delta=angleDiff(Number(p[0]),heading);
+      if(Math.abs(delta)>fov/2)continue;
+      const x=midX+delta/fov*w, y=midY;
+      markers.push({x,y,d:Number(p[1]),angle:Number(p[0]),intensity:Number(p[2])});
+      nearby.push({x,y,d:Number(p[1]),angle:delta});
+      ctx.fillStyle=p[1]<1000?"#ffbe75":"#67d5ff";
+      ctx.beginPath();ctx.arc(x,y,3.2,0,2*Math.PI);ctx.fill();
+    }
+    if(get("show-rays").checked) {
+      nearby.sort((a,b)=>a.x-b.x);
+      ctx.strokeStyle="#80dfff";ctx.lineWidth=1.8;ctx.beginPath();
+      let last=null;
+      for(const p of nearby) {
+        if(last&&Math.abs(p.d-last.d)<300&&p.x-last.x<22){
+          ctx.moveTo(last.x,last.y);ctx.lineTo(p.x,p.y);
+        }
+        last=p;
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+    text("count", String(markers.length));
+  }
+  c.addEventListener("pointerdown",e=>{
+    const rect=c.getBoundingClientRect();
+    const x=(e.clientX-rect.left)*640/rect.width;
+    const y=(e.clientY-rect.top)*480/rect.height;
+    let best=null,d=22*22;
+    for(const p of markers) {
+      const dist=(p.x-x)**2+(p.y-y)**2;
+      if(dist<d){best=p;d=dist;}
+    }
+    text("selected",best?
+      fmt(best.angle,2)+"° · "+fmt(best.d/1000,3)+" m · intenzita "+fmt(best.intensity,0):
+      "Zde není vybraný LiDAR bod.");
+  });
+  for(const id of ["heading","fov","opacity","overlay-enabled","show-rays"]){
+    get(id).addEventListener("input",()=>{
+      text("heading-val",get("heading").value+"°");
+      text("fov-val",get("fov").value+"°");
+      text("opacity-val",get("opacity").value+" %");
+      render();
+    });
+  }
+  get("pause").addEventListener("click",()=>{
+    paused=!paused;
+    get("pause").textContent=paused?"Pokračovat v zobrazení":"Pozastavit zobrazení";
+    if(!paused)refresh();
+  });
+  async function fetchCamera(){
+    if(imageBusy||paused)return;
+    if(!status || !status.camera_preview)return;
+    imageBusy=true;
+    const next=new Image();
+    next.onload=()=>{
+      const old=image.src;
+      image.src=next.src;
+      image.style.visibility="visible";
+      text("camera-note","CSI snímky – živě, bez archivace");
+      hasImage=true;imageBusy=false;
+    };
+    next.onerror=()=>{text("camera-note","Kamera nepředává obraz (může být obsazená).");imageBusy=false;};
+    next.src="/api/camera.jpg?ts="+Date.now();
+  }
+  async function refresh(){
+    if(loading||paused)return;
+    loading=true;
+    try{
+      const [scanResp,infoResp]=await Promise.all([
+        fetch("/api/scan",{cache:"no-store"}),fetch("/api/slam",{cache:"no-store"})
+      ]);
+      if(!scanResp.ok||!infoResp.ok)throw Error("Chyba HTTP");
+      const [raw,info]=await Promise.all([scanResp.json(),infoResp.json()]);
+      scan=raw.streaming?raw.points:[];
+      status=info;
+      text("lidar-state",raw.streaming?"AKTIVNÍ":"BEZ DAT");
+      text("rpm",raw.streaming?fmt(raw.rpm,1):"—");
+      text("gyro",info.imu && info.imu.ready?fmt(info.imu.rate_dps,1)+" °/s":"—");
+      text("camera-state",info.camera && info.camera.opened?
+           (info.camera_preview?"ŽIVĚ":"BEZ OBRAZU"):"VYPNUTÁ");
+      text("error",info.camera && info.camera.error?info.camera.error:"");
+      if(!info.camera_preview){
+        text("camera-note","Náhled vypnutý. Spusť server s --camera --camera-preview.");
+        image.style.visibility="hidden";
+      }
+      render();
+      await fetchCamera();
+    }catch(e){
+      text("error","Server neodpovídá: "+e.message);
+    }finally{loading=false;}
+  }
+  text("heading-val","0°");text("fov-val","65°");text("opacity-val","75 %");
+  image.style.visibility="hidden";render();refresh();setInterval(refresh,400);
+})();
+</script>
+</body>
+</html>
