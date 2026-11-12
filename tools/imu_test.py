@@ -21,8 +21,28 @@ GYRO_LSB_PER_DPS = 131.0  # +/-250 stupňů/s
 ACCEL_LSB_PER_G = 16384.0  # +/-2g
 
 
-def read_sample(bus, address):
-    b = bus.read_i2c_block_data(address, 0x3B, 14)
+def read_sample(bus, address, state=None):
+    """Čti 14 registrů; při nespolehlivém burst read přejdi na jednotlivé bajty.
+
+    Některé moduly/sběrnice odpoví na WHO_AM_I, ale 14b burst selže EIO.
+    Fallback problém s I²C neodstraní; rozliší chybu burst přenosu
+    od úplného výpadku a umožní první zkoušku gyroskopu.
+    """
+    if state is None:
+        state = {}
+    if state.get("bytewise"):
+        b = [bus.read_byte_data(address, reg) for reg in range(0x3B, 0x49)]
+    else:
+        try:
+            b = bus.read_i2c_block_data(address, 0x3B, 14)
+            if len(b) != 14:
+                raise OSError(f"Nekompletní I²C blok: {len(b)} z 14 bajtů")
+        except OSError as exc:
+            print(f"Varování: 14b I²C čtení selhalo ({exc}); zkouším "
+                  "čtení jednotlivých registrů. Pokud selže i to, "
+                  "ověř napětí SDA/SCL, kabel a kontakty.", file=sys.stderr, flush=True)
+            state["bytewise"] = True
+            b = [bus.read_byte_data(address, reg) for reg in range(0x3B, 0x49)]
     ax, ay, az, temp, gx, gy, gz = struct.unpack(">hhhhhhh", bytes(b))
     return {
         "acc_g": (ax / ACCEL_LSB_PER_G, ay / ACCEL_LSB_PER_G, az / ACCEL_LSB_PER_G),
@@ -73,9 +93,10 @@ def main():
 
             print(f"Nehýbej senzorem {a.calibration:g} s – kalibrace nulového gyra Z.", flush=True)
             z_samples = []
+            read_state = {}
             finish = time.monotonic() + a.calibration
             while time.monotonic() < finish:
-                z_samples.append(read_sample(bus, addr)["gyro_dps"][2])
+                z_samples.append(read_sample(bus, addr, read_state)["gyro_dps"][2])
                 time.sleep(0.01)
             bias = statistics.mean(z_samples)
             noise = statistics.pstdev(z_samples)
@@ -89,7 +110,7 @@ def main():
             yaw = 0.0
             started = prev = last_print = time.monotonic()
             while time.monotonic() - started < a.seconds:
-                sample = read_sample(bus, addr)
+                sample = read_sample(bus, addr, read_state)
                 now = time.monotonic()
                 dt = now - prev
                 prev = now
@@ -105,7 +126,9 @@ def main():
     except KeyboardInterrupt:
         print("\nPřerušeno.")
     except OSError as exc:
-        print(f"Chyba I²C: {exc}", file=sys.stderr)
+        print(f"Chyba I²C: {exc}. Detekce 0x68 sama neznamená stabilní "
+              "čtení dat; ověř SDA/SCL (max. 3,3 V), kontakty a napájení.",
+              file=sys.stderr)
         return 1
     return 0
 
