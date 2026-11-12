@@ -142,3 +142,40 @@ sudo python3 /opt/lidartest/tools/slam_server.py
 ~~~
 Prohlížeč v LAN: http://IP_RPI4:8766/
 Detaily: docs/SLAM2D.md.
+
+## 2026-11-12 – MPU-6050 úspěšně přečtena; připravena fúze gyroskopu s LiDARem
+
+Uživatel při dalším pokusu opravil chybu zapojení a dodal výpis plně
+funkčního `python3 tools/imu_test.py --seconds 15`:
+- I²C adresa **0x68** stabilně komunikuje, akcelerometr i gyroskop čtou data.
+- Statický offset gyro Z **−0,202 °/s**, šum **0,032 °/s** za **214 vzorků**.
+- Akcelerometr v klidu cca `(+0,09; −0,05; +1,11)g`; 28,8 °C.
+- Při ručním otočení se mění `gyroZ` i relativní `yaw`;
+  měření bylo přerušeno kolem `yaw=−9,10°`, bez záruky kalibrace úhlu.
+
+Kód na main nyní obsahuje:
+- `tools/imu_fusion.py`: samostatné I²C vlákno, nehybná kalibrace 2,5 s,
+  časovaný relativní gyro heading, kontrola čerstvosti, automatické opakování.
+- `tools/slam_core.py`: rozdíl gyro headingu je predikce yaw mezi
+  **přijatými** skeny; konečný odhad provádí LiDAR scan matching,
+  automatický fallback při ztrátě IMU.
+- `tools/slam_server.py --imu`: opt-in integrace a telemetrie webu.
+- `web/slam.html`: diagnostika gyro Z, relativního natočení a stavu fúze.
+- `tools/test_imu_fusion.py`: offline test integrace úhlové rychlosti,
+  nedostupnosti IMU a scan matcheru s umělou rotací.
+
+Konstrukce zatím není definitivně namontovaná, **živá senzorová fúze
+na RPi4 dosud nebyla spuštěna** – pouze jednotlivý IMU test a
+oddělená LiDAR čtení. Kamera přes CSI kabel na RPi4 je další dostupný
+senzor; **nezasahovat do kamery ani do projektu ProjectionLab** v této fázi.
+
+Připravený příkaz na RPi4:
+
+~~~bash
+sudo apt install -y python3-numpy python3-serial python3-smbus
+sudo git -C /opt/lidartest pull
+sudo python3 /opt/lidartest/tools/slam_server.py --imu
+~~~
+
+Zobrazit v LAN `http://IP_RPI4:8766/`. Prvních 2,5 s nehybat
+celou konstrukcí, aby měla kalibrace gyro Z význam.
