@@ -100,14 +100,35 @@ důvěryhodná místní síť**. Kompletní návod:
 protokolu a JavaScriptu prošly. **Fyzické mapování při reálném přesunu
 zatím neověřeno.**
 
-## MPU-6050 – připraveno na propojení
+## MPU-6050 + LiDAR – experimentální gyro fúze
 
-Gyroskop a akcelerometr **MPU-6050** můžou doplnit 2D SLAM o relativní
-natočení mezi skeny. Zatím **není IMU integrována do SLAM**, nejprve
-ověříme I²C komunikaci na Raspberry Pi 4. Připojení: VCC→3V3 (pin 1),
-GND→pin 6, SDA→pin 3 (GPIO2), SCL→pin 5 (GPIO3).
-Úplný návod: [docs/MPU6050.md](docs/MPU6050.md).
-První test: [tools/imu_test.py](tools/imu_test.py).
+**MPU-6050 již funguje:** reálný test gyro Z a akcelerometru na RPi 4 prošel
+(12. 11. 2026). Gyroskop má offset −0,202 °/s a šum 0,032 °/s
+během klidové kalibrace. Modul RPishop je napájen **5 V na VCC**
+(fyzický pin 2 RPi4), logika SDA/SCL musí zůstat nejvýše 3,3 V.
+SDA→fyzický pin 3, SCL→pin 5, GND→pin 6.
+
+Nově je připravená **volitelná fúze gyro Z s 2D SLAM scan matcherem**.
+Pro spuštění se senzorem (původní 360° radar zůstává na `/radar`):
+
+~~~bash
+sudo apt install -y python3-numpy python3-serial python3-smbus
+sudo git -C /opt/lidartest pull
+sudo python3 /opt/lidartest/tools/slam_server.py --imu
+~~~
+
+Během prvních **2,5 s** nech celou konstrukci nehybnou pro kalibraci
+gyroskopu. Aplikace ukazuje `gyroZ`, relativní úhel IMU, stav
+fúze a chyby I²C. Při odpojení IMU automaticky pokračuje
+LiDAR-only scan matching. Přínos musí být ještě ověřen při pohybu
+na skutečné základně; IMU není absolutní měření X/Y ani kompas.
+
+Na RPi4 je navíc **kamera přes CSI plochý kabel**. Zatím se jí nic
+nemění a aktuální SLAM ji nepoužívá. V budoucnu může pomoci s
+vizuální odometrií a korekcí translačního pohybu.
+
+Dokumentace: [MPU-6050](docs/MPU6050.md) a
+[SLAM + IMU](docs/SLAM2D.md). Test IMU: [imu_test.py](tools/imu_test.py).
 
 ## Další kroky
 
