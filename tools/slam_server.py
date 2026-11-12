@@ -21,6 +21,7 @@ from decode_lidar import HEADER, FRAME_LEN, POINTS_PER_FRAME, crc8
 from live_map import ScanState
 from slam_core import Slam2D
 from imu_fusion import ImuAngleTracker, imu_reader
+from camera_vo import VisualOdometry, camera_worker
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGE_SLAM = ROOT / "web" / "slam.html"
@@ -101,7 +102,8 @@ class Telemetry:
             }
 
 
-def uart_reader(port, baud, scan_q, radar, telemetry, imu=None, gyro_sign=1):
+def uart_reader(port, baud, scan_q, radar, telemetry, imu=None, gyro_sign=1,
+                camera=None, camera_yaw_sign=1):
     try:
         import serial
     except ImportError:
@@ -137,7 +139,10 @@ def uart_reader(port, baud, scan_q, radar, telemetry, imu=None, gyro_sign=1):
                         imu_data = imu.snapshot() if imu is not None else None
                         heading = (gyro_sign * imu_data["heading_deg"]
                                    if imu_data and imu_data["ready"] else None)
-                        item = (scan, heading)
+                        camera_data = camera.snapshot() if camera is not None else None
+                        if camera_data is not None and camera_data["ready"]:
+                            camera_data["heading_deg"] *= camera_yaw_sign
+                        item = (scan, heading, camera_data)
                         try:
                             scan_q.put_nowait(item)
                         except Full:
@@ -154,11 +159,12 @@ def uart_reader(port, baud, scan_q, radar, telemetry, imu=None, gyro_sign=1):
             time.sleep(2)
 
 
-def mapping_worker(scan_q, slam):
+def mapping_worker(scan_q, slam, camera_yaw_offset_deg=0.0):
     while True:
-        scan, imu_heading = scan_q.get()
+        scan, imu_heading, visual = scan_q.get()
         try:
-            slam.process_scan(scan, imu_heading_deg=imu_heading)
+            slam.process_scan(scan, imu_heading_deg=imu_heading, visual=visual,
+                              camera_yaw_offset_deg=camera_yaw_offset_deg)
         except Exception as exc:
             # Zabránit tichému konci vlákna a zachovat sériový odposlech.
             print(f"[SLAM] Chyba mapování: {exc}", flush=True)
@@ -166,7 +172,7 @@ def mapping_worker(scan_q, slam):
             scan_q.task_done()
 
 
-def handler_for(slam, radar, telemetry, imu=None):
+def handler_for(slam, radar, telemetry, imu=None, camera=None):
     class Handler(BaseHTTPRequestHandler):
         def respond(self, code, content, mime, filename=None):
             self.send_response(code)
@@ -195,8 +201,14 @@ def handler_for(slam, radar, telemetry, imu=None):
                         "ready": False, "heading_deg": None, "rate_dps": None,
                         "error": "IMU vypnutá (spusť s --imu)."
                     }
+                    camera_data = camera.snapshot() if camera is not None else {
+                        "opened": False, "ready": False, "mode": "off",
+                        "frames": 0, "features": 0, "inliers": 0,
+                        "error": "Kamera vypnutá; aktivuj --camera až bude volná."
+                    }
                     state.update({
                         "imu": imu_data,
+                        "camera": camera_data,
                         "rpm": scan_status["rpm"],
                         "streaming": scan_status["streaming"],
                         "online": telemetry.snapshot()["online"],
@@ -244,7 +256,26 @@ def main():
                    choices=(0x68, 0x69))
     p.add_argument("--imu-yaw-sign", type=int, choices=(-1, 1), default=1,
                    help="Znaménko gyra Z vůči LiDAR souřadnicím (+1/-1)")
+    p.add_argument("--camera", action="store_true",
+                   help="Jednorázově otevřít CSI kameru (jen pokud není využívána)")
+    p.add_argument("--camera-index", type=int, default=0,
+                   help="Index CSI kamery pro Picamera2")
+    p.add_argument("--camera-downward", action="store_true",
+                   help="Povolit relativní yaw z kamery mířící kolmo na podlahu")
+    p.add_argument("--camera-scale", type=float, default=0.0,
+                   help="m/px, pouze po kalibraci a --camera-downward (výchozí XY nepoužít)")
+    p.add_argument("--camera-yaw-sign", type=int, choices=(-1, 1), default=1,
+                   help="Znaménko obrazové rotace vůči gyro (vyžaduje kalibraci)")
+    p.add_argument("--camera-yaw-offset", type=float, default=0.0,
+                   help="Pevný úhel os kamery vůči LiDARu, pokud se používá metrické XY")
     args = p.parse_args()
+    if args.camera_downward and not args.camera:
+        p.error("--camera-downward vyžaduje --camera")
+    if args.camera_scale and (not args.camera_downward or
+                              not 0 < args.camera_scale < 0.05):
+        p.error("--camera-scale vyžaduje --camera-downward a 0 < m/px < 0.05")
+    if args.camera_index < 0:
+        p.error("--camera-index musí být >= 0")
     if args.baud <= 0 or not 1 <= args.http_port <= 65535:
         p.error("Neplatný baudrate či HTTP port")
 
@@ -259,23 +290,37 @@ def main():
     telemetry = Telemetry()
     scan_q = Queue(maxsize=2)
     imu = ImuAngleTracker() if args.imu else None
+    camera = (VisualOdometry(downward=args.camera_downward,
+                             metres_per_pixel=args.camera_scale)
+              if args.camera else None)
+    if camera is not None:
+        # Default OFF – kamera může již sloužit ProjectionLabu.
+        # Neodpojujeme jiné procesy, nepřebíráme zařízení a neopakujeme grab.
+        threading.Thread(target=camera_worker,
+                         args=(camera, args.camera_index),
+                         daemon=True).start()
     if imu is not None:
         threading.Thread(target=imu_reader,
                          args=(imu, 1, args.imu_address),
                          daemon=True).start()
     threading.Thread(target=uart_reader,
                      args=(args.port, args.baud, scan_q, radar, telemetry,
-                           imu, args.imu_yaw_sign),
+                           imu, args.imu_yaw_sign, camera, args.camera_yaw_sign),
                      daemon=True).start()
-    threading.Thread(target=mapping_worker, args=(scan_q, slam), daemon=True).start()
+    threading.Thread(target=mapping_worker,
+                     args=(scan_q, slam, args.camera_yaw_offset),
+                     daemon=True).start()
 
     server = ThreadingHTTPServer((args.host, args.http_port),
-                                 handler_for(slam, radar, telemetry, imu))
+                                 handler_for(slam, radar, telemetry, imu, camera))
     print(f"[SLAM] http://<IP_RPI4>:{args.http_port}/", flush=True)
     print(f"[RADAR] http://<IP_RPI4>:{args.http_port}/radar", flush=True)
     print(f"[IMU] {'zapnuto' if args.imu else 'vypnuto'}"
           f" (gyro Z sign: {args.imu_yaw_sign:+d}); čtení MPU nikdy neposílá"
           " příkazy do LiDARu.", flush=True)
+    print(f"[CAM] {'vypnuto' if not args.camera else ('downward VO' if args.camera_downward else 'jen monitor')}"
+          f"; měřítko {'kalibrováno' if args.camera_scale else 'není – X/Y z kamery zakázáno'}.",
+          flush=True)
     print("Pouze lokální síť. Ctrl+C ukončí. Do LiDARu neposíláme příkazy.", flush=True)
     try:
         server.serve_forever(poll_interval=0.25)
