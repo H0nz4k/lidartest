@@ -186,3 +186,20 @@ Nepropojovat napájení LiDARu ani 5V větev MPU se vstupy GPIO.
 MPU breakout vyžaduje vůči RPi maximálně 3,3 V na SDA/SCL.
 LiDAR čteme pasivně. Webové UI běží bez autentizace – pouze
 v důvěryhodné LAN, nepublikovat na internet.
+
+### Otočení náhledu o 90° (bez fyzického otáčení senzoru)
+
+Na stránce `/camera` je ovladač **Otočení živého obrazu**:
+`0°`, `90° vpravo`, `180°` nebo `90° vlevo`.
+Výchozí orientace je **90° vpravo**, poslední volba se ukládá
+jen do `localStorage` daného prohlížeče. Při 90°/270° se
+náhled automaticky změní z formátu 4:3 na **3:4 na výšku**.
+LiDAR překryv zůstává přesně rozměrově přizpůsoben zobrazenému
+obdélníku, kliknutí na body dál vrací odpovídající měřené vzdálenosti.
+Překryv je nadále **orientační, nikoli kalibrovaná projekce**.
+
+Tato volba otáčí **pouze webový obraz**, ne CSI senzor, skutečná
+JPEG data, vstup vizuální odometrie nebo prostorovou fúzi SLAM.
+Pro změnu webu stačí `git pull` na RPi4 a znovu načíst stránku;
+**běžící server není nutné restartovat**, protože HTML načítá
+z disku pro každý požadavek. Nesahat na ProjectionLab ani na HUB.
