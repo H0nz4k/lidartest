@@ -3,11 +3,14 @@
 import math
 import time
 import unittest
+import sys
+import types
+from unittest.mock import patch
 
 import cv2
 import numpy as np
 
-from camera_vo import VisualOdometry
+from camera_vo import VisualOdometry, camera_worker
 from slam_core import Slam2D
 from test_slam2d import scan_in_room
 
@@ -68,6 +71,22 @@ class VisualOdometryTest(unittest.TestCase):
         self.assertFalse(result["opened"])
         self.assertIn("busy", result["error"])
         self.assertEqual(result["session"], 1)
+
+    def test_busy_csi_camera_is_not_retried_or_reclaimed(self):
+        class BusyCamera:
+            calls = 0
+            def __init__(self, camera_num):
+                self.__class__.calls += 1
+                raise RuntimeError("Device or resource busy")
+
+        fake_picamera2 = types.ModuleType("picamera2")
+        fake_picamera2.Picamera2 = BusyCamera
+        tracker = VisualOdometry()
+        with patch.dict(sys.modules, {"picamera2": fake_picamera2}):
+            camera_worker(tracker)
+        self.assertEqual(BusyCamera.calls, 1)
+        self.assertFalse(tracker.snapshot()["opened"])
+        self.assertIn("busy", tracker.snapshot()["error"])
 
     def test_camera_yaw_used_only_when_explicitly_enabled(self):
         slam = Slam2D(size=160)
