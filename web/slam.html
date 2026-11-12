@@ -90,7 +90,12 @@
           <div class="stat"><span>MPU-6050</span><b id="imu-status">—</b></div>
           <div class="stat"><span>Gyro Z</span><b id="gyro-z">—</b></div>
           <div class="stat"><span>IMU otočení</span><b id="imu-heading">—</b></div>
+          <div class="stat"><span>CSI kamera</span><b id="camera-status">VYPNUTA</b></div>
+          <div class="stat"><span>Obrazové body</span><b id="camera-features">—</b></div>
+          <div class="stat"><span>Vizuální yaw</span><b id="camera-yaw">—</b></div>
+          <div class="stat"><span>Vizuální fúze</span><b id="camera-fusion">—</b></div>
           <p class="note" id="imu-detail">Gyro zpřesňuje odhad natočení LiDARu, neurčuje samostatně polohu.</p>
+          <p class="note" id="camera-detail">Kamera je volitelná; defaultně se neotevírá, protože může sloužit ProjectionLabu.</p>
           <p class="note" id="info" aria-live="polite">Čekám na první úplnou otáčku.</p>
         </section>
         <section class="panel">
@@ -111,7 +116,7 @@
         </section>
       </aside>
     </div>
-    <p class="footer">SLAM odhaduje pohyb porovnáním po sobě jdoucích skenů. Posouvej LiDAR pomalu, bez zakrývání výhledu. IMU (pokud zapnutá) zpřesňuje odhad natočení; bez odometrie a uzavírání smyček může mapa driftovat. Stojící LiDAR ukazuje stále stejný okolní prostor, nikoliv nové místnosti.</p>
+    <p class="footer">SLAM skládá LiDAR skeny, MPU-6050 dodává gyro; kamera je volitelná. Bez kalibrace orientace a měřítka kamera nemůže bezpečně určit metrické X/Y. Bez loop closure může mapa driftovat. Při využití CSI kamerou v ProjectionLabu ji SLAM nepřebírá. Stojící LiDAR ukazuje stále stejný okolní prostor, nikoliv nové místnosti.</p>
   </main>
 
 <script>
@@ -218,6 +223,18 @@
     el("imu-status").textContent=imu.ready?(d.imu_used?"FÚZE":"PŘIPRAVENA"):"—";
     el("gyro-z").textContent=imu.ready?cs(imu.rate_dps,1)+" °/s":"—";
     el("imu-heading").textContent=imu.ready?cs(imu.heading_deg,1)+"°":"—";
+    const camera=d.camera||{};
+    el("camera-status").textContent=camera.opened?(camera.ready?"VO":"SLEDUJI"):"VYPNUTO";
+    el("camera-features").textContent=camera.opened?
+      cs(camera.inliers||0,0)+" / "+cs(camera.features||0,0):"—";
+    el("camera-yaw").textContent=camera.ready?
+      cs(camera.heading_deg,1)+"°":"—";
+    el("camera-fusion").textContent=d.visual_used?
+      (d.visual_translation_used?"ÚHEL + XY":"ÚHEL"):"—";
+    el("camera-detail").textContent=camera.error||
+      (camera.mode==="monitor"?"Optický tok aktivní, zatím bez zásahu do SLAM.":
+      camera.scale_calibrated?"Vizuální odometrie: úhel + kalibrované XY.":
+      "Kamera směrem dolů: relativní yaw, bez metrické polohy XY.");
     el("imu-detail").textContent=imu.ready?
       (d.imu_used?"IMU pomáhá předpovídat úhel, LiDAR ho koriguje.":"IMU aktivní, čekám na navazující přijatý sken.") :
       (imu.error||"Bez IMU. SLAM pokračuje pouze s LiDARem.");
