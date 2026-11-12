@@ -1,0 +1,7 @@
+# Local measurement captures and generated files
+captures/
+*.pgm
+*.pyc
+__pycache__/
+.venv/
+.pytest_cache/
