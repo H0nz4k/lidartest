@@ -54,3 +54,9 @@ apt install -y git && git clone https://github.com/H0nz4k/lidartest.git /opt/lid
 ```
 
 Výsledek skutečného UART odposlechu zatím **neznámý**. Spuštění až po ověření správného zapojení a 3,3V logiky, jak je uvedeno výše.
+
+## 2026-11-12 – nové měření / rotace
+
+- Uživatel naměřil **0,8 V** při měření datového signálu, dosud ale neupřesnil, zda šlo o RX nebo TX (a zda byl CP2102 napájen). Jediná hodnota z multimetru při UART přenosu **nepotvrzuje** logické úrovně ani bezpečnost zapojení; může jít o průměr proměnného signálu.
+- **Nový stav:** LiDAR se nyní **roztočil**. Příčina rozběhu zatím není potvrzena; RX i TX byly už propojené s CP2102.
+- Další krok: bez posílání inicializačních povelů provést pasivní odposlech `python3 tools/sniff_uart.py --port /dev/ttyUSB0` na Raspberry Pi 4 **až po ověření bezpečných úrovní**, případně pomocí vhodného převodníku úrovní. Zaznamenat výstup a podmínky roztočení; nezasahovat do roztočené mechaniky a nehledět do laserového okénka.
