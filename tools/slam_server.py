@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 from decode_lidar import HEADER, FRAME_LEN, POINTS_PER_FRAME, crc8
 from live_map import ScanState
 from slam_core import Slam2D
+from imu_fusion import ImuAngleTracker, imu_reader
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGE_SLAM = ROOT / "web" / "slam.html"
@@ -100,7 +101,7 @@ class Telemetry:
             }
 
 
-def uart_reader(port, baud, scan_q, radar, telemetry):
+def uart_reader(port, baud, scan_q, radar, telemetry, imu=None, gyro_sign=1):
     try:
         import serial
     except ImportError:
@@ -131,14 +132,20 @@ def uart_reader(port, baud, scan_q, radar, telemetry):
                         if now - last_enqueued < 0.24:
                             continue
                         last_enqueued = now
+                        # Gyro odečítat při dokončení skenu, nikoli až po
+                        # čekání ve frontě na pomalejší scan matcher.
+                        imu_data = imu.snapshot() if imu is not None else None
+                        heading = (gyro_sign * imu_data["heading_deg"]
+                                   if imu_data and imu_data["ready"] else None)
+                        item = (scan, heading)
                         try:
-                            scan_q.put_nowait(scan)
+                            scan_q.put_nowait(item)
                         except Full:
                             try:
                                 scan_q.get_nowait()
                             except Empty:
                                 pass
-                            scan_q.put_nowait(scan)
+                            scan_q.put_nowait(item)
         except (serial.SerialException, OSError) as exc:
             message = f"UART: {exc}"
             telemetry.set(False, message)
@@ -149,9 +156,9 @@ def uart_reader(port, baud, scan_q, radar, telemetry):
 
 def mapping_worker(scan_q, slam):
     while True:
-        scan = scan_q.get()
+        scan, imu_heading = scan_q.get()
         try:
-            slam.process_scan(scan)
+            slam.process_scan(scan, imu_heading_deg=imu_heading)
         except Exception as exc:
             # Zabránit tichému konci vlákna a zachovat sériový odposlech.
             print(f"[SLAM] Chyba mapování: {exc}", flush=True)
@@ -159,7 +166,7 @@ def mapping_worker(scan_q, slam):
             scan_q.task_done()
 
 
-def handler_for(slam, radar, telemetry):
+def handler_for(slam, radar, telemetry, imu=None):
     class Handler(BaseHTTPRequestHandler):
         def respond(self, code, content, mime, filename=None):
             self.send_response(code)
@@ -184,7 +191,12 @@ def handler_for(slam, radar, telemetry):
                 if route == "/api/slam":
                     state = slam.snapshot()
                     scan_status = radar.snapshot()
+                    imu_data = imu.snapshot() if imu is not None else {
+                        "ready": False, "heading_deg": None, "rate_dps": None,
+                        "error": "IMU vypnutá (spusť s --imu)."
+                    }
                     state.update({
+                        "imu": imu_data,
                         "rpm": scan_status["rpm"],
                         "streaming": scan_status["streaming"],
                         "online": telemetry.snapshot()["online"],
@@ -227,6 +239,11 @@ def main():
     p.add_argument("--baud", type=int, default=115200)
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--http-port", type=int, default=8766)
+    p.add_argument("--imu", action="store_true", help="Aktivovat MPU6050 na I²C-1")
+    p.add_argument("--imu-address", type=lambda x: int(x, 0), default=0x68,
+                   choices=(0x68, 0x69))
+    p.add_argument("--imu-yaw-sign", type=int, choices=(-1, 1), default=1,
+                   help="Znaménko gyra Z vůči LiDAR souřadnicím (+1/-1)")
     args = p.parse_args()
     if args.baud <= 0 or not 1 <= args.http_port <= 65535:
         p.error("Neplatný baudrate či HTTP port")
@@ -241,15 +258,24 @@ def main():
     radar = ScanState()
     telemetry = Telemetry()
     scan_q = Queue(maxsize=2)
+    imu = ImuAngleTracker() if args.imu else None
+    if imu is not None:
+        threading.Thread(target=imu_reader,
+                         args=(imu, 1, args.imu_address),
+                         daemon=True).start()
     threading.Thread(target=uart_reader,
-                     args=(args.port, args.baud, scan_q, radar, telemetry),
+                     args=(args.port, args.baud, scan_q, radar, telemetry,
+                           imu, args.imu_yaw_sign),
                      daemon=True).start()
     threading.Thread(target=mapping_worker, args=(scan_q, slam), daemon=True).start()
 
     server = ThreadingHTTPServer((args.host, args.http_port),
-                                 handler_for(slam, radar, telemetry))
+                                 handler_for(slam, radar, telemetry, imu))
     print(f"[SLAM] http://<IP_RPI4>:{args.http_port}/", flush=True)
     print(f"[RADAR] http://<IP_RPI4>:{args.http_port}/radar", flush=True)
+    print(f"[IMU] {'zapnuto' if args.imu else 'vypnuto'}"
+          f" (gyro Z sign: {args.imu_yaw_sign:+d}); čtení MPU nikdy neposílá"
+          " příkazy do LiDARu.", flush=True)
     print("Pouze lokální síť. Ctrl+C ukončí. Do LiDARu neposíláme příkazy.", flush=True)
     try:
         server.serve_forever(poll_interval=0.25)
