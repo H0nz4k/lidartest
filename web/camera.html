@@ -65,6 +65,11 @@ footer{font-size:.8rem;color:#91aabc;margin-top:14px}
 <div class="stat"><span>CSI kamera</span><strong id="camera-state">—</strong></div>
 <div class="stat"><span>LiDAR</span><strong id="lidar-state">—</strong></div>
 <div class="stat"><span>RPM</span><strong id="rpm">—</strong></div>
+<div class="stat"><span>LiDAR skenů/s</span><strong id="rx-rate">—</strong></div>
+<div class="stat"><span>SLAM skenů/s</span><strong id="map-rate">—</strong></div>
+<div class="stat"><span>Ztráty fronty</span><strong id="queue-loss">0</strong></div>
+<div class="stat"><span>IMU čas. odch.</span><strong id="imu-align">—</strong></div>
+<div class="stat"><span>CSI čas. odch.</span><strong id="cam-align">—</strong></div>
 <div class="stat"><span>Body ve výhledu</span><strong id="count">0</strong></div>
 <div class="stat"><span>Gyro Z</span><strong id="gyro">—</strong></div>
 <h2 style="margin-top:17px">Vybraný bod</h2>
@@ -216,6 +221,12 @@ footer{font-size:.8rem;color:#91aabc;margin-top:14px}
       status=info;
       text("lidar-state",raw.streaming?"AKTIVNÍ":"BEZ DAT");
       text("rpm",raw.streaming?fmt(raw.rpm,1):"—");
+      const pipe=info.pipeline||{};
+      text("rx-rate",pipe.input_hz!=null?fmt(pipe.input_hz,1)+" Hz":"—");
+      text("map-rate",pipe.processed_hz!=null?fmt(pipe.processed_hz,1)+" Hz":"—");
+      text("queue-loss",fmt(pipe.dropped_overload||0,0));
+      text("imu-align",pipe.imu_sync_ms!=null?fmt(pipe.imu_sync_ms,1)+" ms":"—");
+      text("cam-align",pipe.camera_sync_ms!=null?fmt(pipe.camera_sync_ms,1)+" ms":"—");
       text("gyro",info.imu && info.imu.ready?fmt(info.imu.rate_dps,1)+" °/s":"—");
       text("camera-state",info.camera && info.camera.opened?
            (info.camera_preview?"ŽIVĚ":"BEZ OBRAZU"):"VYPNUTÁ");
