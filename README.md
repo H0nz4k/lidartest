@@ -71,13 +71,43 @@ python3 tools/live_map.py --replay captures/scan01.bin
 
 **Pozor:** Webový server standardně naslouchá v lokální síti (`0.0.0.0:8765`), neobsahuje přihlášení – nezveřejňovat ho do internetu. Pro přístup jen z Pi použij `--host 127.0.0.1`. Čtení UART je pasivní; program neposílá motoru ani LiDARu žádné povely.
 
+## 2D SLAM – experimentální mapa při pohybu
+
+**Připraveno 12. 11. 2026:** [nástroj 2D SLAM](tools/slam_server.py) a
+[webová mapa](web/slam.html). Na rozdíl od radaru nad jednou rotací
+skládá postupně obsazenost prostoru a odhaduje relativní polohu z
+navazujících skenů (scan-to-map). Zatím **bez IMU, odometrie a loop closure**;
+pohyb musí být pomalý, může se kumulovat drift. Pro zmapování dalších místností
+je nutné přesouvat **celý** LiDAR; se stojícím snímačem mapa nebude růst mimo
+jeho dosah.
+
+Na **Raspberry Pi 4** zastavit běžící čtečky UART a spustit:
+
+~~~bash
+sudo apt install -y python3-numpy python3-serial
+sudo git -C /opt/lidartest pull
+sudo python3 /opt/lidartest/tools/slam_server.py
+~~~
+
+Mapování: **http://IP_RPI4:8766/**, současně původní 360° radar:
+**http://IP_RPI4:8766/radar** (jediná společná čtečka CP2102).
+Prostřednictvím webu lze uložit mapu PGM a trasu CSV, změnit měřítko
+a resetovat pouze odvozenou mapu. Server je bez přihlášení: **pouze
+důvěryhodná místní síť**. Kompletní návod:
+[docs/SLAM2D.md](docs/SLAM2D.md).
+
+**Ověření:** GitHub Actions offline testy simulovaného přesunu, datového
+protokolu a JavaScriptu prošly. **Fyzické mapování při reálném přesunu
+zatím neověřeno.**
+
 ## Další kroky
 
 1. Naměřit napětí na vstupním `+`/GND přímo u LiDARu pod zátěží (ověřit skutečných ~5 V).
 2. Ověřit klidová napětí `RADAR RX` a `RADAR TX` proti GND a určit skutečný vysílací směr.
 3. **Splněno:** zachycena a CRC ověřena měřicí data při 115200 baud.
-4. **Připraveno:** živá 360° mapa v prohlížeči (ještě neověřena na uživatelově Raspberry Pi 4).
-5. Upřesnit elektrické zapojení a okolnosti automatického roztočení, ideálně ověřit osciloskopem / měřením proudu.
+4. **Splněno:** živý 360° radar i validní 10sekundový odposlech (1 921 rámců, 0 CRC chyb).
+5. **Připraveno:** experimentální 2D SLAM – čeká na fyzické ověření při pohybu.
+6. Upřesnit elektrické zapojení a okolnosti automatického roztočení, ideálně ověřit osciloskopem / měřením proudu.
 
 Podrobnosti a průběžné měření: [docs/PRUBEH.md](docs/PRUBEH.md).
 
