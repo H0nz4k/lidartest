@@ -93,6 +93,7 @@
           <div class="stat"><span>CSI kamera</span><b id="camera-status">VYPNUTA</b></div>
           <div class="stat"><span>Obrazové body</span><b id="camera-features">—</b></div>
           <div class="stat"><span>Vizuální yaw</span><b id="camera-yaw">—</b></div>
+          <div class="stat"><span>Pohyb v obraze</span><b id="camera-pixels">—</b></div>
           <div class="stat"><span>Vizuální fúze</span><b id="camera-fusion">—</b></div>
           <p class="note" id="imu-detail">Gyro zpřesňuje odhad natočení LiDARu, neurčuje samostatně polohu.</p>
           <p class="note" id="camera-detail">Kamera je volitelná; defaultně se neotevírá, protože může sloužit ProjectionLabu.</p>
@@ -229,6 +230,8 @@
       cs(camera.inliers||0,0)+" / "+cs(camera.features||0,0):"—";
     el("camera-yaw").textContent=camera.ready?
       cs(camera.heading_deg,1)+"°":"—";
+    el("camera-pixels").textContent=camera.ready?
+      cs(Math.hypot(camera.x_px||0,camera.y_px||0),1)+" px":"—";
     el("camera-fusion").textContent=d.visual_used?
       (d.visual_translation_used?"ÚHEL + XY":"ÚHEL"):"—";
     el("camera-detail").textContent=camera.error||
