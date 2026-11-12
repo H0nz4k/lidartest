@@ -10,7 +10,7 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from camera_vo import VisualOdometry, camera_worker
+from camera_vo import VisualOdometry, CameraPreview, camera_worker
 from slam_core import Slam2D
 from test_slam2d import scan_in_room
 
@@ -26,6 +26,21 @@ def make_scene():
 
 
 class VisualOdometryTest(unittest.TestCase):
+    def test_opt_in_preview_is_memory_only_jpeg(self):
+        preview = CameraPreview(max_fps=5)
+        self.assertIsNone(preview.latest())
+        original = np.zeros((480, 640, 3), dtype=np.uint8)
+        original[20:100, 20:100] = [255, 40, 70]
+        preview.update(original)
+        jpeg = preview.latest()
+        self.assertIsNotNone(jpeg)
+        self.assertTrue(jpeg.startswith(b"\\xff\\xd8"))
+        self.assertEqual(preview.seq, 1)
+        preview.update(original)  # throttling do 5 fps
+        self.assertEqual(preview.seq, 1)
+        decoded = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        self.assertEqual(tuple(decoded.shape), (480, 640, 3))
+
     def test_monitor_never_supplies_slam_prior(self):
         tracker = VisualOdometry()
         tracker.set_opened()
