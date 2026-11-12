@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c1622">
+  <title>ETA Raggio · 2D SLAM</title>
+  <style>
+    :root { color-scheme:dark; font:16px/1.4 system-ui,Segoe UI,sans-serif; background:#0c1622; color:#ebf6ff; }
+    * {box-sizing:border-box;}
+    body {margin:0;}
+    .app {max-width:1320px;margin:0 auto;padding:14px clamp(12px,2vw,30px) 40px;}
+    header {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+    h1 {font-size:clamp(1.25rem,2vw,1.6rem);margin:0;letter-spacing:-.03em;}
+    .subtitle {color:#97afc2;font-size:.85rem;margin:5px 0 0;}
+    nav {display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+    nav a {display:inline-block;text-decoration:none;padding:9px 14px;border:1px solid #324e66;border-radius:10px;color:#bfdcf0;font-size:.86rem;font-weight:700;}
+    nav a[aria-current=page] {background:#13455e;color:white;border-color:#227ba4;}
+    .layout {display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:14px;align-items:start;}
+    .surface {background:#122334;border:1px solid #2a4257;border-radius:18px;overflow:hidden;}
+    .scan-box {position:relative;padding:10px;background:radial-gradient(ellipse at center,#162c3d,#0c1824 70%);}
+    canvas {display:block;width:100%;aspect-ratio:1;}
+    .overlay {position:absolute;top:20px;left:20px;pointer-events:none;font-size:.8rem;color:#93b0c5;background:#0a1929dd;padding:6px 10px;border-radius:7px;}
+    .key {padding:11px 14px;display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:.81rem;color:#adc6d6;border-top:1px solid #2b4354;}
+    .sw {display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:middle;}
+    .aside {display:grid;gap:12px;}
+    .panel {background:#142739;border:1px solid #30475b;border-radius:15px;padding:16px;}
+    h2 {font-size:.82rem;letter-spacing:.06em;text-transform:uppercase;margin:0 0 12px;color:#9bb5c8;}
+    .stat {display:flex;justify-content:space-between;align-items:baseline;gap:10px;border-bottom:1px solid #2b4152;padding:9px 0;}
+    .stat:last-of-type {border:0;}
+    .stat span {font-size:.86rem;color:#adbfce;}
+    .stat b {font-size:1.1rem;font-variant-numeric:tabular-nums;}
+    #status {font-size:.8rem;border:1px solid #52677c;background:#243748;color:#bbcbda;padding:7px 11px;border-radius:30px;font-weight:700;}
+    #status.live {border-color:#137d61;background:#0d382c;color:#8aebc2;}
+    .control {display:flex;align-items:center;justify-content:space-between;font-size:.91rem;gap:8px;margin-bottom:5px;}
+    input[type=range] {width:100%;accent-color:#63cef6;height:30px;}
+    label.toggle {display:flex;gap:11px;align-items:center;min-height:42px;font-size:.88rem;color:#bdd1de;cursor:pointer;}
+    input[type=checkbox] {accent-color:#63cef6;width:19px;height:19px;}
+    button,.download {display:block;width:100%;min-height:44px;border-radius:10px;padding:10px;text-align:center;font:inherit;font-size:.88rem;font-weight:700;cursor:pointer;text-decoration:none;}
+    button {background:#145571;color:#f1fbff;border:1px solid #267a98;}
+    button.danger {background:#4b2a32;border-color:#985366;color:#fff1f4;}
+    .download {background:#20364a;border:1px solid #3b5e76;color:#d7ebfa;}
+    button:hover,.download:hover {filter:brightness(1.16);}
+    button:focus-visible,a:focus-visible,input:focus-visible {outline:2px solid #8bdfff;outline-offset:3px;}
+    .controls {display:grid;gap:8px;margin-top:12px;}
+    .note {font-size:.8rem;color:#93acbd;margin:11px 0 0;}
+    .footer {color:#90a9bc;font-size:.83rem;margin-top:16px;max-width:900px;}
+    @media (max-width:780px) {.layout {grid-template-columns:1fr;} .aside {grid-template-columns:repeat(2,minmax(0,1fr));}}
+    @media (max-width:520px) {.aside {grid-template-columns:1fr;} .scan-box {padding:3px;} .key {gap:9px;} .overlay {top:9px;left:9px;}}
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <h1>ETA Raggio · 2D SLAM</h1>
+        <p class="subtitle">Experimentální mapování bez odometrie · Raspberry Pi 4</p>
+      </div>
+      <nav aria-label="Zobrazení">
+        <a href="/" aria-current="page">2D mapa</a>
+        <a href="/radar">Živý radar</a>
+        <span id="status" role="status" aria-live="polite">ČEKÁM NA DATA</span>
+      </nav>
+    </header>
+    <div class="layout">
+      <section class="surface" aria-label="Mapa skenovaného prostoru">
+        <div class="scan-box">
+          <div class="overlay" id="overlay">Výřez mapy: 8 m</div>
+          <canvas id="map" width="800" height="800" role="img"
+                  aria-label="Postupně vytvářená mapa překážek, volného prostoru a odhadovaná poloha LiDARu"></canvas>
+        </div>
+        <div class="key">
+          <span><i class="sw" style="background:#8bdaef"></i>Překážky</span>
+          <span><i class="sw" style="background:#36556c"></i>Volný prostor</span>
+          <span><i class="sw" style="background:#ffbb70"></i>Aktuální sken</span>
+          <span><i class="sw" style="background:#acf8a6"></i>Dráha LiDARu</span>
+        </div>
+      </section>
+      <aside class="aside">
+        <section class="panel">
+          <h2>SLAM · poloha a sledování</h2>
+          <div class="stat"><span>Poloha X</span><b id="x">—</b></div>
+          <div class="stat"><span>Poloha Y</span><b id="y">—</b></div>
+          <div class="stat"><span>Natočení</span><b id="yaw">—</b></div>
+          <div class="stat"><span>Otáčky LiDARu</span><b id="rpm">—</b></div>
+          <div class="stat"><span>Přijaté skeny</span><b id="scans">0</b></div>
+          <div class="stat"><span>Uznané skeny</span><b id="accepted">0</b></div>
+          <div class="stat"><span>Odmítnuté</span><b id="rejected">0</b></div>
+          <div class="stat"><span>Skóre shody</span><b id="quality">—</b></div>
+          <p class="note" id="info" aria-live="polite">Čekám na první úplnou otáčku.</p>
+        </section>
+        <section class="panel">
+          <h2>Zobrazení mapy</h2>
+          <div class="control"><label for="size">Šířka výřezu</label><b id="size-value">8 m</b></div>
+          <input type="range" id="size" min="3" max="20" step="1" value="8">
+          <label class="toggle"><input id="follow" type="checkbox" checked> Sledovat polohu LiDARu</label>
+          <label class="toggle"><input id="free" type="checkbox" checked> Volný prostor</label>
+          <label class="toggle"><input id="points" type="checkbox" checked> Aktuální sken</label>
+          <label class="toggle"><input id="path" type="checkbox" checked> Zobrazovat dráhu</label>
+          <div class="controls">
+            <button id="pause" type="button">Pozastavit zobrazení</button>
+            <a class="download" href="/api/map.pgm" download>Uložit mapu (PGM)</a>
+            <a class="download" href="/api/trajectory.csv" download>Uložit trasu (CSV)</a>
+            <button class="danger" type="button" id="reset">Vynulovat mapu</button>
+          </div>
+          <p class="note">Vynulování smaže odvozenou mapu a trajektorii, ale neovládá LiDAR.</p>
+        </section>
+      </aside>
+    </div>
+    <p class="footer">SLAM odhaduje pohyb porovnáním po sobě jdoucích skenů. Posouvej LiDAR pomalu, bez zakrývání výhledu. Bez IMU, odometrie a uzavírání smyček může mapa driftovat. Stojící LiDAR ukazuje stále stejný okolní prostor, nikoliv nové místnosti.</p>
+  </main>
+
+<script>
+(() => {
+  "use strict";
+  const el = id => document.getElementById(id);
+  const canvas = el("map"), ctx = canvas.getContext("2d");
+  const controls = ["size","follow","free","points","path"].map(el);
+  let mapData = null, paused = false, fetching = false;
+  let deviceWidth = 800, scaleRatio = 1;
+  const cs = (v,d=2) => Number(v).toLocaleString("cs-CZ",{maximumFractionDigits:d});
+
+  function resize() {
+    const css = Math.max(230, canvas.getBoundingClientRect().width);
+    const ratio = Math.min(window.devicePixelRatio || 1,2);
+    const pixels = Math.round(css*ratio);
+    if(canvas.width!==pixels || canvas.height!==pixels){canvas.width=pixels;canvas.height=pixels;}
+    ctx.setTransform(ratio,0,0,ratio,0,0);
+    deviceWidth=css;scaleRatio=ratio;
+  }
+
+  function draw() {
+    resize();
+    const w=deviceWidth, half=w/2;
+    const data=mapData;
+    const widthM=Number(el("size").value);
+    const pxPerM=w/widthM;
+    const pose=data && Array.isArray(data.pose) ? data.pose : [0,0,0];
+    const centerX=(el("follow").checked?pose[0]:0);
+    const centerY=(el("follow").checked?pose[1]:0);
+    const project=(x,y)=>({x:half+(x-centerX)*pxPerM,y:half-(y-centerY)*pxPerM});
+
+    ctx.clearRect(0,0,w,w);
+    ctx.fillStyle="#0b1b28";ctx.fillRect(0,0,w,w);
+
+    // 1m mřížka v jednotkách světa, se středem nezávislým na zoomu.
+    ctx.strokeStyle="#213849";ctx.lineWidth=1;
+    for(let m=-20;m<=20;m++){
+      const x=project(m,0).x, y=project(0,m).y;
+      if(x>=0&&x<=w){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,w);ctx.stroke();}
+      if(y>=0&&y<=w){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+    }
+
+    // Načítaná mapa: obsazenost => světlý bod, volný prostor => tmavá plocha.
+    if(data && Array.isArray(data.cells)){
+      const size=Number(data.size), res=Number(data.resolution_m);
+      const r=Math.max(1,res*pxPerM);
+      for(const cell of data.cells){
+        const value=cell[2];
+        if(value<0 && !el("free").checked) continue;
+        const p=project((cell[0]-size/2)*res,(cell[1]-size/2)*res);
+        if(p.x < -r||p.y < -r||p.x > w||p.y > w) continue;
+        ctx.fillStyle=value>=3?"#8bdaef":value>0?"#627e8c":"#36556c";
+        ctx.fillRect(p.x-r/2,p.y-r/2,r+0.4,r+0.4);
+      }
+    }
+
+    if(data && el("path").checked && data.path.length>1){
+      ctx.beginPath();
+      ctx.strokeStyle="#acf8a6";ctx.lineWidth=2.2;
+      data.path.forEach((xy,i)=>{const p=project(xy[0],xy[1]); i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y);});
+      ctx.stroke();
+    }
+
+    // Poslední jeden úplný 360° sken umístěný do odhadované polohy.
+    if(data && data.scan && el("points").checked && data.streaming){
+      const yaw=pose[2]*Math.PI/180, c=Math.cos(yaw),s=Math.sin(yaw);
+      for(const point of data.scan){
+        if(point[1]<=0) continue;
+        const a=point[0]*Math.PI/180,d=point[1]/1000;
+        const lx=Math.sin(a)*d,ly=Math.cos(a)*d;
+        const p=project(pose[0]+c*lx-s*ly,pose[1]+s*lx+c*ly);
+        if(p.x<0||p.x>=w||p.y<0||p.y>=w) continue;
+        ctx.fillStyle="#ffbb70";
+        ctx.fillRect(p.x-1.5,p.y-1.5,3,3);
+      }
+    }
+
+    // Ikona LiDARu ve středu jeho odhadované polohy.
+    const here=project(pose[0],pose[1]);
+    ctx.save();ctx.translate(here.x,here.y);
+    ctx.rotate(-pose[2]*Math.PI/180);
+    ctx.beginPath();ctx.moveTo(0,-14);ctx.lineTo(-9,8);ctx.lineTo(9,8);ctx.closePath();
+    ctx.fillStyle="#aaf9b2";ctx.fill();ctx.strokeStyle="#134a37";ctx.lineWidth=1.5;ctx.stroke();ctx.restore();
+    ctx.fillStyle="#a5bfce";ctx.font="12px system-ui";
+    ctx.fillText("1 čtverec = 1 m",12,w-15);
+    el("overlay").textContent="Výřez mapy: "+widthM+" m";
+  }
+
+  function updateInfo() {
+    if(!mapData) return;
+    const d=mapData;
+    el("status").classList.toggle("live",!!d.streaming);
+    el("status").textContent=d.streaming?"● ŽIVÁ DATA":"○ BEZ DAT";
+    el("x").textContent=cs(d.pose[0])+" m";
+    el("y").textContent=cs(d.pose[1])+" m";
+    el("yaw").textContent=cs(d.pose[2],1)+"°";
+    el("rpm").textContent=d.streaming?cs(d.rpm,1):"—";
+    el("scans").textContent=cs(d.scans,0);
+    el("accepted").textContent=cs(d.accepted,0);
+    el("rejected").textContent=cs(d.rejected,0);
+    el("quality").textContent=d.initialized?cs(d.quality,2):"—";
+    el("info").textContent=!d.streaming?(d.error||"Čekám na UART.") :
+      (!d.initialized?"Čekám na první kompletní 360° sken." :
+      (d.quality<1.8?"Slabá shoda. Zpomal a vrať se do známé oblasti." :
+      "Mapování aktivní. Pohybuj LiDARem pomalu a plynule."));
+  }
+
+  async function refresh(){
+    if(paused||fetching)return;
+    fetching=true;
+    try{
+      const reply=await fetch("/api/slam",{cache:"no-store"});
+      if(!reply.ok) throw Error("HTTP "+reply.status);
+      mapData=await reply.json();
+      updateInfo();draw();
+    } catch(error){
+      el("status").classList.remove("live");
+      el("status").textContent="○ SPOJENÍ PŘERUŠENO";
+      el("info").textContent="Webové spojení: "+error.message;
+    } finally {fetching=false;}
+  }
+
+  controls.forEach(input=>input.addEventListener("input",()=>{
+    el("size-value").textContent=el("size").value+" m";draw();
+  }));
+  el("pause").addEventListener("click",()=>{
+    paused=!paused;
+    el("pause").textContent=paused?"Pokračovat v zobrazení":"Pozastavit zobrazení";
+    if(!paused)refresh();
+  });
+  el("reset").addEventListener("click",async()=>{
+    if(!confirm("Opravdu smazat vytvořenou mapu a celou trajektorii?"))return;
+    el("reset").disabled=true;
+    try{
+      const reply=await fetch("/api/reset",{method:"POST",cache:"no-store"});
+      if(!reply.ok)throw Error("HTTP "+reply.status);
+      mapData=null;await refresh();
+    } catch(error){el("info").textContent="Reset selhal: "+error.message;}
+    finally{el("reset").disabled=false;}
+  });
+  window.addEventListener("resize",draw);
+  draw();refresh();
+  setInterval(refresh,700);
+})();
+</script>
+</body>
+</html>
