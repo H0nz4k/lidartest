@@ -87,6 +87,10 @@
           <div class="stat"><span>Uznané skeny</span><b id="accepted">0</b></div>
           <div class="stat"><span>Odmítnuté</span><b id="rejected">0</b></div>
           <div class="stat"><span>Skóre shody</span><b id="quality">—</b></div>
+          <div class="stat"><span>MPU-6050</span><b id="imu-status">—</b></div>
+          <div class="stat"><span>Gyro Z</span><b id="gyro-z">—</b></div>
+          <div class="stat"><span>IMU otočení</span><b id="imu-heading">—</b></div>
+          <p class="note" id="imu-detail">Gyro zpřesňuje odhad natočení LiDARu, neurčuje samostatně polohu.</p>
           <p class="note" id="info" aria-live="polite">Čekám na první úplnou otáčku.</p>
         </section>
         <section class="panel">
@@ -107,7 +111,7 @@
         </section>
       </aside>
     </div>
-    <p class="footer">SLAM odhaduje pohyb porovnáním po sobě jdoucích skenů. Posouvej LiDAR pomalu, bez zakrývání výhledu. Bez IMU, odometrie a uzavírání smyček může mapa driftovat. Stojící LiDAR ukazuje stále stejný okolní prostor, nikoliv nové místnosti.</p>
+    <p class="footer">SLAM odhaduje pohyb porovnáním po sobě jdoucích skenů. Posouvej LiDAR pomalu, bez zakrývání výhledu. IMU (pokud zapnutá) zpřesňuje odhad natočení; bez odometrie a uzavírání smyček může mapa driftovat. Stojící LiDAR ukazuje stále stejný okolní prostor, nikoliv nové místnosti.</p>
   </main>
 
 <script>
@@ -210,6 +214,13 @@
     el("accepted").textContent=cs(d.accepted,0);
     el("rejected").textContent=cs(d.rejected,0);
     el("quality").textContent=d.initialized?cs(d.quality,2):"—";
+    const imu=d.imu||{};
+    el("imu-status").textContent=imu.ready?(d.imu_used?"FÚZE":"PŘIPRAVENA"):"—";
+    el("gyro-z").textContent=imu.ready?cs(imu.rate_dps,1)+" °/s":"—";
+    el("imu-heading").textContent=imu.ready?cs(imu.heading_deg,1)+"°":"—";
+    el("imu-detail").textContent=imu.ready?
+      (d.imu_used?"IMU pomáhá předpovídat úhel, LiDAR ho koriguje.":"IMU aktivní, čekám na navazující přijatý sken.") :
+      (imu.error||"Bez IMU. SLAM pokračuje pouze s LiDARem.");
     el("info").textContent=!d.streaming?(d.error||"Čekám na UART.") :
       (!d.initialized?"Čekám na první kompletní 360° sken." :
       (d.quality<1.8?"Slabá shoda. Zpomal a vrať se do známé oblasti." :
