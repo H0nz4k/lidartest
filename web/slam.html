@@ -88,6 +88,14 @@
           <div class="stat"><span>Uznané skeny</span><b id="accepted">0</b></div>
           <div class="stat"><span>Odmítnuté</span><b id="rejected">0</b></div>
           <div class="stat"><span>Skóre shody</span><b id="quality">—</b></div>
+          <div class="stat"><span>LiDAR skenů/s</span><b id="rx-hz">—</b></div>
+          <div class="stat"><span>Zpracováno/s</span><b id="map-hz">—</b></div>
+          <div class="stat"><span>Fronta skenů</span><b id="queue-depth">—</b></div>
+          <div class="stat"><span>Ztráty přetížením</span><b id="dropped">0</b></div>
+          <div class="stat"><span>Výpočet mapy</span><b id="processing-ms">—</b></div>
+          <div class="stat"><span>Latence mapování</span><b id="latency-ms">—</b></div>
+          <div class="stat"><span>IMU čas. chyba</span><b id="imu-sync">—</b></div>
+          <div class="stat"><span>Kamera čas. chyba</span><b id="camera-sync">—</b></div>
           <div class="stat"><span>MPU-6050</span><b id="imu-status">—</b></div>
           <div class="stat"><span>Gyro Z</span><b id="gyro-z">—</b></div>
           <div class="stat"><span>IMU otočení</span><b id="imu-heading">—</b></div>
@@ -221,6 +229,15 @@
     el("accepted").textContent=cs(d.accepted,0);
     el("rejected").textContent=cs(d.rejected,0);
     el("quality").textContent=d.initialized?cs(d.quality,2):"—";
+    const pipe=d.pipeline||{};
+    el("rx-hz").textContent=pipe.input_hz!=null?cs(pipe.input_hz,1)+" Hz":"—";
+    el("map-hz").textContent=pipe.processed_hz!=null?cs(pipe.processed_hz,1)+" Hz":"—";
+    el("queue-depth").textContent=pipe.pending!=null?cs(pipe.pending,0):"—";
+    el("dropped").textContent=cs(pipe.dropped_overload||0,0);
+    el("processing-ms").textContent=pipe.processing_ms!=null?cs(pipe.processing_ms,0)+" ms":"—";
+    el("latency-ms").textContent=pipe.latency_ms!=null?cs(pipe.latency_ms,0)+" ms":"—";
+    el("imu-sync").textContent=pipe.imu_sync_ms!=null?cs(pipe.imu_sync_ms,0)+" ms":"—";
+    el("camera-sync").textContent=pipe.camera_sync_ms!=null?cs(pipe.camera_sync_ms,0)+" ms":"—";
     const imu=d.imu||{};
     el("imu-status").textContent=imu.ready?(d.imu_used?"FÚZE":"PŘIPRAVENA"):"—";
     el("gyro-z").textContent=imu.ready?cs(imu.rate_dps,1)+" °/s":"—";
