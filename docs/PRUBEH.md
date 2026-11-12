@@ -42,3 +42,15 @@ Skript nevysílá žádné UART bajty a nijak neřídí motor. Rychlost 115200 b
 ### Výsledek
 
 **Nevyzkoušeno na připojeném hardware.** Doplnit po prvním skutečném běhu: datum, změřená napětí, použitý port, baudrate, počet bajtů a ukázku HEX výstupu. Poté rozhodnout o dalších krocích.
+
+## 2026-11-12 – první pokus o spuštění na RPi 4
+
+Na RPi 4 (`mapping`) bylo `python3-serial` nainstalováno, ale spuštění skriptu skončilo `can't open file '/opt/tools/sniff_uart.py'`. Příčina: **chybí Git** (`bash: git: command not found`), takže `git clone` neproběhl, adresář `lidartest` neexistuje a `cd lidartest` selhalo. Nejde zatím o chybu komunikace s LiDARem.
+
+Náprava (z aktuálního shellu `root@mapping:/opt#`):
+
+```bash
+apt install -y git && git clone https://github.com/H0nz4k/lidartest.git /opt/lidartest && cd /opt/lidartest && ls -l /dev/ttyUSB* && python3 tools/sniff_uart.py --port /dev/ttyUSB0
+```
+
+Výsledek skutečného UART odposlechu zatím **neznámý**. Spuštění až po ověření správného zapojení a 3,3V logiky, jak je uvedeno výše.
