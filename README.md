@@ -149,6 +149,37 @@ Web: **http://IP_RPI4:8766/camera**; stránka SLAM: `/`,
 nevystavovat internetové veřejnosti. Kamera nadále nesmí být
 současně používaná ProjectionLabem.
 
+## 3D skener s pevnou základnou (nová experimentální etapa)
+
+**Stacionární 3D mračno bodů** ze stávajícího ETA Raggio + MPU-6050:
+pevná spodní část konstrukce, horní část se **LiDARem i MPU**
+se naklání kolem jedné vodorovné osy. Gyro a akcelerometr
+odhadují relativní roll/pitch; LiDAR měří každou svou 360°
+otáčku, body se převádějí do XYZ. **Není potřeba kamera ani
+odhad posunu celé základny X/Y/Z**, dokud základna stojí.
+
+~~~bash
+sudo apt install -y python3-numpy python3-serial python3-smbus
+sudo git -C /opt/lidartest pull
+sudo python3 /opt/lidartest/tools/scan3d_server.py --tilt-axis y
+~~~
+
+**Webový 3D náhled:** http://IP_RPI4:8767/ .
+Otáčení 3D mapy prstem/myší, uložení bodového mračna do PLY,
+reset a zobrazení aktuálního náklonu. Prvních 2,5 s klidová
+kalibrace. Pak naklánět přibližně po 2–5°, ideálně s krátkými
+zastávkami. **Před spuštěním ukonči původní 2D slam_server.py:**
+UART /dev/ttyUSB0 může číst pouze jeden proces.
+
+Pokud mechanika používá osu MPU X (roll), použít
+`--tilt-axis x`; poloha pivota vůči středu LiDARu se
+po změření doplní pomocí `--pivot-offset-x/y/z`.
+Při pohybu celé základny záznam nebude prostorově správně.
+Kód zatím neprovádí de-skew jednotlivých paprsků;
+reálné 3D mapování se teprve ověří.
+
+Návod: [docs/STATIONARY_3D.md](docs/STATIONARY_3D.md).
+
 ## Rychlé skeny a časová synchronizace (aktualizace 12. 11. 2026)
 
 Pevný limit **1 sken / 240 ms** je odstraněn. Všechny kompletní
