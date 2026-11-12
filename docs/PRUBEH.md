@@ -14,7 +14,7 @@
 
 Skript: [`tools/sniff_uart.py`](../tools/sniff_uart.py).
 
-**Před zapojením:** s odpojeným napájením propojit GND LiDARu a CP2102. Ověřit, který vodič je **výstup LiDARu**, a že pro RXD CP2102 nepřekročí bezpečnou napěťovou úroveň 3,3 V (ideálně osciloskopem / logickým analyzátorem s odpovídajícím vstupem). Označení RX/TX na původní desce vysavače je z její perspektivy a není samo o sobě měřením směru. Na první test připojit jen ověřený výstup LiDARu na **RXD CP2102**; **TXD CP2102 nechat odpojený**. Pin +5V na CP2102 nespojovat s externě napájeným LiDARem.
+**Aktualizace zapojení:** Uživatel má již fyzicky připojené **RXD i TXD CP2102** a TXD nyní nemůže odpojit. Není nutné ho odpájet jen kvůli testovacímu skriptu; skript **nevolá `write()` a neposílá UART příkazy**. Fyzicky připojené TXD ale není zcela pasivní – v klidu drží logickou úroveň, obvykle cca 3,3 V. Proto **před připojením USB převodníku / zapnutím** ověřit, že TXD CP2102 opravdu vede do vstupu LiDARu (nikoli do jeho výstupu), a že **výstup LiDARu vůči GND nepřekročí 3,3 V**. Pro neověřené směry a úrovně nelze zapojení považovat za bezpečné: při propojení dvou výstupů hrozí jejich elektrický konflikt. Kde je dostupný osciloskop/logický analyzátor s odpovídající úrovní, ověřit přenos i špičky. Označení RX/TX na původní desce vysavače je z její perspektivy, směr zatím měřením nepotvrzen. **CP2102 +5V a 3V3 k LiDARu nepřipojovat**, jeho 5V napájení zůstává samostatné; propojit GND.
 
 Příprava na RPi 4:
 
