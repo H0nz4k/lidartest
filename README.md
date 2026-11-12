@@ -48,12 +48,35 @@ python3 tools/decode_lidar.py --port /dev/ttyUSB0 --seconds 10 --csv captures/sc
 
 Dekodér ověřuje CRC-8 rámců, dopočítává úhly 12 bodů v rámci a ukládá vzdálenost v mm, intenzitu, otáčky a čas. Není nutné odesílat žádné UART příkazy. Kód jednotkového testu na skutečném rámci je `tools/test_decoder.py`.
 
+## Živá 360° mapa v prohlížeči (Raspberry Pi 4)
+
+**Nové:** [`tools/live_map.py`](tools/live_map.py) + [`web/index.html`](web/index.html).
+Živý webový radar čte CRC-validní rámce LDROBOT přímo z CP2102, průběžně aktualizuje body s rozlišením 0,5°, zobrazuje vzdálenosti a otáčky. Body starší než 1,8 s mizí, 0mm měření maže předchozí bod v odpovídajícím směru. Mapa je **relativní k poloze LiDARu**, nejde o SLAM ani kumulativní mapu při pohybu.
+
+Na Raspberry Pi 4 (kde už je repozitář ve složce `/opt/lidartest`):
+
+```bash
+cd /opt/lidartest && git pull && python3 tools/live_map.py
+```
+
+Pokud `python3-serial` není nainstalovaný: `sudo apt install -y python3-serial`.
+Nech ukončený jiný program pracující s `/dev/ttyUSB0` (např. `sniff_uart.py`).
+Web otevři v jiném zařízení ve stejné síti na **`http://IP_RPI4:8765`**; IP zjistíš na Pi pomocí `hostname -I`. Port lze změnit parametrem `--http-port`, sériový port `--port`. Ukončení Ctrl+C.
+
+Případná diagnostika bez skutečného senzoru (již existující binární odposlech):
+
+```bash
+python3 tools/live_map.py --replay captures/scan01.bin
+```
+
+**Pozor:** Webový server standardně naslouchá v lokální síti (`0.0.0.0:8765`), neobsahuje přihlášení – nezveřejňovat ho do internetu. Pro přístup jen z Pi použij `--host 127.0.0.1`. Čtení UART je pasivní; program neposílá motoru ani LiDARu žádné povely.
+
 ## Další kroky
 
 1. Naměřit napětí na vstupním `+`/GND přímo u LiDARu pod zátěží (ověřit skutečných ~5 V).
 2. Ověřit klidová napětí `RADAR RX` a `RADAR TX` proti GND a určit skutečný vysílací směr.
 3. **Splněno:** zachycena a CRC ověřena měřicí data při 115200 baud.
-4. Spustit nový dekodér, ověřit CSV úhlů a vzdáleností a vytvořit 360° mapu.
+4. **Připraveno:** živá 360° mapa v prohlížeči (ještě neověřena na uživatelově Raspberry Pi 4).
 5. Upřesnit elektrické zapojení a okolnosti automatického roztočení, ideálně ověřit osciloskopem / měřením proudu.
 
 Podrobnosti a průběžné měření: [docs/PRUBEH.md](docs/PRUBEH.md).
