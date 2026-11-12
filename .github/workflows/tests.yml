@@ -9,16 +9,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Python parser and live map tests (no hardware)
+      - name: Install 2D SLAM dependency
+        run: python3 -m pip install --disable-pip-version-check numpy
+      - name: Python parser, radar and SLAM tests (no hardware)
         run: python3 -m unittest discover -s tools -p 'test_*.py' -v
       - name: Validate radar JavaScript syntax
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
-          html = Path("web/index.html").read_text(encoding="utf-8")
-          scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
-          assert len(scripts) == 1, "Expected one inline application script"
-          Path("/tmp/lidartest-radar.js").write_text(scripts[0], encoding="utf-8")
+          for name in ("index.html", "slam.html"):
+              html = Path("web", name).read_text(encoding="utf-8")
+              scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+              assert len(scripts) == 1, f"Expected one inline script in {name}"
+              Path("/tmp/" + name + ".js").write_text(scripts[0], encoding="utf-8")
           PY
-          node --check /tmp/lidartest-radar.js
+          node --check /tmp/index.html.js
+          node --check /tmp/slam.html.js
