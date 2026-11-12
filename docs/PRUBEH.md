@@ -179,3 +179,40 @@ sudo python3 /opt/lidartest/tools/slam_server.py --imu
 
 Zobrazit v LAN `http://IP_RPI4:8766/`. Prvních 2,5 s nehybat
 celou konstrukcí, aby měla kalibrace gyro Z význam.
+
+## 2026-11-12 – další etapa LiDAR + IMU + CSI kamera (zatím offline)
+
+Na větvi `main` je dokončená první fáze tří-senzorového propojení:
+
+- `tools/camera_vo.py` – optický tok OpenCV (sparse LK + RANSAC),
+  časované pozorování mezi snímky, přibližný yaw při **pohledu kamery
+  kolmo dolů** a surový pohyb obrazu v pixelech pro pozdější kalibraci.
+- `tools/slam_core.py` – slabá kamera+IMU predikce yaw před LiDAR scan
+  matcherem; vizuální XY pouze po explicitní kalibraci měřítka.
+- `tools/slam_server.py` – kamera jen s explicitním `--camera`,
+  volitelně `--camera-downward`; žádný zásah do ProjectionLabu.
+- `web/slam.html` – stav kamery, počty obrazových bodů, vizuální
+  yaw, pohyb obrazu a indikace reálné fúze.
+- `tools/test_camera_vo.py` – offline testy falešných obrazových
+  pohybů a bezpečných fallbacků.
+- `docs/CAMERA_SLAM.md` – úplný postup, montážní předpoklady a
+  bezpečné zapojení.
+
+Vzhledem k tomu, že **Raspberry Pi 4 používá tutéž CSI kameru pro
+ProjectionLab**, kamera zůstává ve výchozím stavu **vypnutá** a
+při obsazenosti ji nový kód nepřevezme, nedojde k ukončení procesu.
+Kamera se neotevírá ani při obyčejném `--imu` SLAMu.
+
+První ověření s volnou kamerou (zatím **jen monitor** bez vlivu kamery
+na pohyb mapy):
+
+~~~bash
+sudo apt install -y python3-opencv python3-picamera2
+cd /opt/lidartest && git pull
+sudo python3 tools/slam_server.py --imu --camera
+~~~
+
+Pokud bude kamera namontovaná směrem dolů a nebudeme měnit její
+orientaci vůči LiDARu, pak teprve `--camera-downward`.
+Část pro metricky kalibrovanou polohu X/Y zatím není ověřena a
+bez fyzické kalibrace nesmí být zapínána.
