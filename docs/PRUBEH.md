@@ -94,3 +94,21 @@ python3 tools/decode_lidar.py --port /dev/ttyUSB0 --seconds 10 --csv captures/sc
 Pro kontrolu dekodéru bez hardwaru: `python3 -m unittest discover -s tools -p 'test_*.py'`. Jednotkový test používá **skutečný první rámec** ze zaslaného odposlechu. Výsledky reálného běhu nového dekodéru je potřeba ještě ověřit na RPi 4.
 
 Protokol: <https://github.com/ldrobotSensorTeam/ldlidar_stl_ros2/blob/master/ldlidar_driver/include/dataprocess/lipkg.h> a dokumentace LD19 v2.5.
+
+## 2026-11-12 – živý 360° radar připraven v repozitáři
+
+Nově přidány:
+
+- [`tools/live_map.py`](../tools/live_map.py) – průběžné čtení `/dev/ttyUSB0` na RPi4, CRC-validace 47b rámců, zásobník 720 směrů (0,5°), vypršení bodů po 1,8 s, read-only JSON API `/api/scan` a web na portu `8765`; automatické obnovení po ztrátě sériového zařízení. Žádné UART povely.
+- [`web/index.html`](../web/index.html) – responzivní interaktivní radar na Canvas: body, přibližné obrysy ze sousedních měření, zoom 2–12 m, telemetrie CRC/RPM, zobrazení vzdálenosti po kliknutí, možnost pozastavení zobrazení.
+- [`tools/test_live_map.py`](../tools/test_live_map.py), [`CI workflow`](../.github/workflows/tests.yml) – parser testovaný na skutečném rámce ETA Raggio, samostatně kontrolovaný JavaScript syntax checkerem Node.
+
+**GitHub Actions:** pro commit `22f2b929` workflow **success** (run 43131131841). Jde o **offline testy**, ne zkoušku připojeného hardwaru.
+
+Pro živý test:
+
+```bash
+cd /opt/lidartest && git pull && python3 tools/live_map.py
+```
+
+Z jiného zařízení v LAN otevřít `http://IP_RPI4:8765` (IP: `hostname -I`). Nesmí současně běžet jiný program, který má otevřený `/dev/ttyUSB0`. Server bez autentizace je určen výhradně pro důvěryhodnou lokální síť. Aktuální HW výsledek živého zobrazení zatím **nepotvrzen**.
