@@ -216,3 +216,41 @@ Pokud bude kamera namontovaná směrem dolů a nebudeme měnit její
 orientaci vůči LiDARu, pak teprve `--camera-downward`.
 Část pro metricky kalibrovanou polohu X/Y zatím není ověřena a
 bez fyzické kalibrace nesmí být zapínána.
+
+## 2026-11-12 – zrušen 240ms limit + synchronizace LiDAR/MPU/CSI
+
+Uživatel schválil optimalizaci na stávajícím RPi 4 bez změny motoru.
+
+- `RevolutionAssembler.feed_events()` ukládá přibližnou monotónní
+  časovou značku dokončení každého 360° skenu; původní `feed()`
+  zůstal zpětně kompatibilní.
+- `slam_server.py` odstraňuje `if now-last_enqueued < 0.24`,
+  čte UART v menších blocích 256 B / timeout 0,05 s a posílá
+  **všechny dokončené otáčky** do oddělené 8prvkové fronty.
+  Při přetížení se nejstarší čekající sken odloží s počítadlem
+  `dropped_overload`, příjem se nadále nezpomaluje.
+- `tools/sensor_sync.py`: společná historie monotónních
+  timestampů s interpolací jen mezi vzorky **stejné session**,
+  bezpečným časovým prahem a odmítnutím starých dat.
+- `imu_fusion.py` drží časovanou yaw historii; při překalibraci
+  nebo I²C chybě ji vynuluje. `slam_core.py` nepoužije
+  neznámý yaw skok přes rozdílné IMU session.
+- `camera_vo.py` zaznamenává timestamps validních frame shod
+  i v monitor režimu (kvůli metrice synchronizace) a nepustí
+  zastaralou VO do SLAM. Samotné čtení časové historie již
+  není blokováno výpočtem OpenCV.
+- `tools/scan_pipeline.py` a web mapa zobrazují vstupní/realizované
+  skeny za sekundu, hloubku fronty, zahozené skeny, dobu
+  výpočtu mapy, latenci a aproximační odchylku IMU/CSI.
+- `tools/test_sensor_sync.py` + `test_camera_vo.py` ověřují
+  asynchronní interpolaci, kalibrační session, 11 skenů bez gate,
+  přetížení fronty a pasivní časování kamery.
+
+**Omezení:** software časuje přijetí dat ze senzorů, ne skutečné
+okamžiky jednotlivých paprsků (žádná hardware sync/de-skew).
+Při přetížení CPU stále může docházet ke ztrátám, ale budou
+v API explicitně vidět; vyšší zpracování 10 Hz zatím nebylo
+změřeno na skutečném Pi4.
+
+Instalace je jen `git pull` a restart tohoto konkrétního
+SLAM procesu. Produkční HUB a ProjectionLab se nemění.
