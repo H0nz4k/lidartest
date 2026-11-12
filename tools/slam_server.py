@@ -21,11 +21,12 @@ from decode_lidar import HEADER, FRAME_LEN, POINTS_PER_FRAME, crc8
 from live_map import ScanState
 from slam_core import Slam2D
 from imu_fusion import ImuAngleTracker, imu_reader
-from camera_vo import VisualOdometry, camera_worker
+from camera_vo import VisualOdometry, CameraPreview, camera_worker
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGE_SLAM = ROOT / "web" / "slam.html"
 PAGE_RADAR = ROOT / "web" / "index.html"
+PAGE_CAMERA = ROOT / "web" / "camera.html"
 
 
 class RevolutionAssembler:
@@ -172,7 +173,7 @@ def mapping_worker(scan_q, slam, camera_yaw_offset_deg=0.0):
             scan_q.task_done()
 
 
-def handler_for(slam, radar, telemetry, imu=None, camera=None):
+def handler_for(slam, radar, telemetry, imu=None, camera=None, preview=None):
     class Handler(BaseHTTPRequestHandler):
         def respond(self, code, content, mime, filename=None):
             self.send_response(code)
@@ -192,6 +193,15 @@ def handler_for(slam, radar, telemetry, imu=None, camera=None):
                     return self.respond(200, PAGE_SLAM.read_bytes(), "text/html; charset=utf-8")
                 if route == "/radar":
                     return self.respond(200, PAGE_RADAR.read_bytes(), "text/html; charset=utf-8")
+                if route == "/camera":
+                    return self.respond(200, PAGE_CAMERA.read_bytes(), "text/html; charset=utf-8")
+                if route == "/api/camera.jpg":
+                    if preview is None:
+                        return self.respond(404, b"Camera preview disabled; add --camera-preview", "text/plain")
+                    jpeg = preview.latest()
+                    if jpeg is None:
+                        return self.respond(503, b"Camera image not available", "text/plain")
+                    return self.respond(200, jpeg, "image/jpeg")
                 if route == "/api/scan":
                     return self.respond(200, json.dumps(radar.snapshot()).encode(), "application/json")
                 if route == "/api/slam":
@@ -209,6 +219,7 @@ def handler_for(slam, radar, telemetry, imu=None, camera=None):
                     state.update({
                         "imu": imu_data,
                         "camera": camera_data,
+                        "camera_preview": preview is not None,
                         "rpm": scan_status["rpm"],
                         "streaming": scan_status["streaming"],
                         "online": telemetry.snapshot()["online"],
@@ -258,6 +269,8 @@ def main():
                    help="Znaménko gyra Z vůči LiDAR souřadnicím (+1/-1)")
     p.add_argument("--camera", action="store_true",
                    help="Jednorázově otevřít CSI kameru (jen pokud není využívána)")
+    p.add_argument("--camera-preview", action="store_true",
+                   help="Publikovat živý JPEG v LAN bez hesla (opt-in, jen důvěryhodná LAN)")
     p.add_argument("--camera-index", type=int, default=0,
                    help="Index CSI kamery pro Picamera2")
     p.add_argument("--camera-downward", action="store_true",
@@ -271,6 +284,8 @@ def main():
     args = p.parse_args()
     if args.camera_downward and not args.camera:
         p.error("--camera-downward vyžaduje --camera")
+    if args.camera_preview and not args.camera:
+        p.error("--camera-preview vyžaduje --camera")
     if args.camera_scale and (not args.camera_downward or
                               not 0 < args.camera_scale < 0.05):
         p.error("--camera-scale vyžaduje --camera-downward a 0 < m/px < 0.05")
@@ -293,11 +308,12 @@ def main():
     camera = (VisualOdometry(downward=args.camera_downward,
                              metres_per_pixel=args.camera_scale)
               if args.camera else None)
+    preview = CameraPreview() if args.camera_preview else None
     if camera is not None:
         # Default OFF – kamera může již sloužit ProjectionLabu.
         # Neodpojujeme jiné procesy, nepřebíráme zařízení a neopakujeme grab.
         threading.Thread(target=camera_worker,
-                         args=(camera, args.camera_index),
+                         args=(camera, args.camera_index, 10, preview),
                          daemon=True).start()
     if imu is not None:
         threading.Thread(target=imu_reader,
@@ -312,9 +328,12 @@ def main():
                      daemon=True).start()
 
     server = ThreadingHTTPServer((args.host, args.http_port),
-                                 handler_for(slam, radar, telemetry, imu, camera))
+                                 handler_for(slam, radar, telemetry, imu, camera, preview))
     print(f"[SLAM] http://<IP_RPI4>:{args.http_port}/", flush=True)
     print(f"[RADAR] http://<IP_RPI4>:{args.http_port}/radar", flush=True)
+    print(f"[KAMERA] http://<IP_RPI4>:{args.http_port}/camera "
+          f"({'živý náhled zapnut' if preview else 'náhled vypnut'}).",
+          flush=True)
     print(f"[IMU] {'zapnuto' if args.imu else 'vypnuto'}"
           f" (gyro Z sign: {args.imu_yaw_sign:+d}); čtení MPU nikdy neposílá"
           " příkazy do LiDARu.", flush=True)
