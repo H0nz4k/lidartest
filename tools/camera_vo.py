@@ -11,6 +11,8 @@ import math
 import threading
 import time
 
+from sensor_sync import TimedHistory
+
 
 class CameraPreview:
     """Nejnovější JPEG pouze v RAM; aktivní jen při --camera-preview.
@@ -59,6 +61,7 @@ class CameraPreview:
 class VisualOdometry:
     def __init__(self, downward=False, metres_per_pixel=0.0):
         self.lock = threading.RLock()
+        self.history = TimedHistory(capacity=80)
         self.downward = bool(downward)
         self.metres_per_pixel = float(metres_per_pixel)
         self.previous = None
@@ -85,6 +88,7 @@ class VisualOdometry:
             self.last_good_t = 0.0
             self.previous = None
             self.previous_t = None
+            self.history.clear()
             self.session += 1
 
     def set_opened(self):
@@ -116,6 +120,7 @@ class VisualOdometry:
             self.previous, self.previous_t = gray, now
             if dt <= 0 or dt > 0.8 or previous.shape != gray.shape:
                 self.last_good_t = 0.0
+                self.history.clear()
                 self.session += 1
                 return
 
@@ -154,6 +159,7 @@ class VisualOdometry:
             self.inliers = int(inlier_mask.sum())
             if self.inliers < 18 or self.inliers / self.features < 0.60:
                 self.last_good_t = 0.0
+                self.history.clear()
                 self.session += 1
                 return
 
@@ -166,6 +172,7 @@ class VisualOdometry:
             self.last_flow = float(flow)
             if abs(delta) > 16.0 or flow > 130.0:
                 self.last_good_t = 0.0
+                self.history.clear()
                 self.session += 1
                 return
 
@@ -185,6 +192,24 @@ class VisualOdometry:
                 if self.metres_per_pixel > 0:
                     self.x_m = self.x_px * self.metres_per_pixel
                     self.y_m = self.y_px * self.metres_per_pixel
+                self.history.add(now, {
+                    "heading_deg": self.heading_deg,
+                    "x_m": self.x_m if self.metres_per_pixel > 0 else None,
+                    "y_m": self.y_m if self.metres_per_pixel > 0 else None,
+                    "session": self.session,
+                })
+
+    def sample_at(self, timestamp, max_age=0.18):
+        """Downward VO interpolovaná/přiřazená ke konci LiDAR skenu."""
+        with self.lock:
+            if not self.opened or not self.downward:
+                return None
+            data = self.history.at(timestamp, max_age=max_age, max_gap=0.25)
+            if data is None:
+                return None
+            data.update({"ready": True, "mode": "downward",
+                         "scale_calibrated": self.metres_per_pixel > 0})
+            return data
 
     def snapshot(self, max_age=0.4):
         with self.lock:
