@@ -40,6 +40,10 @@ class Slam2D:
             self.imu_anchor_deg = None
             self.imu_used = False
             self.imu_delta_deg = 0.0
+            self.visual_anchor = None
+            self.visual_used = False
+            self.visual_delta_deg = 0.0
+            self.visual_translation_used = False
 
     @staticmethod
     def _scan_points(scan):
@@ -96,14 +100,16 @@ class Slam2D:
         penalty = 0.45 * math.hypot(dx, dy) / 0.10 + 0.12 * abs(math.degrees(da)) / 2.0
         return matched - penalty
 
-    def _match(self, xy, imu_delta_deg=None):
+    def _match(self, xy, imu_delta_deg=None, translation_xy=None):
+        # Predikce ze senzorů pouze zužuje oblast pro LiDAR korelaci.
+        # Kamera se používá jen po explicitní kalibraci měřítka.
+        x, y, yaw = self.pose
+        if translation_xy is not None:
+            x += translation_xy[0]
+            y += translation_xy[1]
         if imu_delta_deg is not None:
-            # Gyro změna natočení je predikce scan matcheru, nikoli
-            # náhrada LiDAR měření. LiDAR zpřesní úhel v okolí predikce.
-            prior = (self.pose[0], self.pose[1],
-                     self.pose[2] + math.radians(imu_delta_deg))
-        else:
-            prior = self.pose
+            yaw += math.radians(imu_delta_deg)
+        prior = (x, y, yaw)
         likelihood = self._likelihood()
         # 90 bodů postačuje pro korelaci; hustší paprsky používáme k mapování.
         samples = xy[::2]
@@ -165,11 +171,11 @@ class Slam2D:
                     cy += stepy
             self.grid[ey, ex] = min(12, int(self.grid[ey, ex]) + 5)
 
-    def process_scan(self, scan, imu_heading_deg=None):
+    def process_scan(self, scan, imu_heading_deg=None, visual=None, camera_yaw_offset_deg=0.0):
         """Integrace jednoho skenu. IMU heading = relativní gyro Z [°].
 
-        IMU není měření absolutního yaw: změna od posledního přijatého
-        skenu slouží jen jako prior pro korelační odhad LiDARem.
+        IMU a volitelná vizuální odometrie z kamery jsou pouze priory
+        vůči poslednímu přijatému skenu; konečné body určuje LiDAR.
         """
         result = self._scan_points(scan)
         with self.lock:
@@ -181,12 +187,19 @@ class Slam2D:
             imu_heading = None
             if imu_heading_deg is not None and math.isfinite(imu_heading_deg):
                 imu_heading = float(imu_heading_deg)
+            visual_data = None
+            if visual and visual.get("ready") and visual.get("mode") == "downward":
+                heading = visual.get("heading_deg")
+                session = visual.get("session")
+                if isinstance(heading, (int, float)) and math.isfinite(heading) and isinstance(session, int):
+                    visual_data = dict(visual)
             if not self.initialized:
                 self._integrate(xy)
                 self.initialized = True
                 self.accepted += 1
                 self.quality = 10.0
                 self.imu_anchor_deg = imu_heading
+                self.visual_anchor = visual_data
                 return True
 
             # Po výpadku IMU nesmíme integrovat neznámé otočení:
@@ -198,7 +211,41 @@ class Slam2D:
                 raw_delta = (imu_heading - self.imu_anchor_deg + 180) % 360 - 180
                 if abs(raw_delta) <= 65:
                     delta = raw_delta
-            pose, score = self._match(xy, delta)
+            # Korelace LiDARu má poslední slovo. Vizuální yaw lze
+            # použít pouze pro kolmo dolů otočenou, pevně uchycenou kameru.
+            visual_delta = None
+            camera_translation = None
+            if visual_data is None:
+                self.visual_anchor = None
+            elif self.visual_anchor is not None and (
+                visual_data["session"] == self.visual_anchor["session"]
+            ):
+                raw = (visual_data["heading_deg"] -
+                       self.visual_anchor["heading_deg"] + 180) % 360 - 180
+                if abs(raw) <= 45:
+                    visual_delta = raw
+                    if visual_data.get("scale_calibrated") and self.visual_anchor.get("scale_calibrated"):
+                        x0, y0 = self.visual_anchor.get("x_m"), self.visual_anchor.get("y_m")
+                        x1, y1 = visual_data.get("x_m"), visual_data.get("y_m")
+                        if all(isinstance(v, (int, float)) and math.isfinite(v)
+                               for v in (x0, y0, x1, y1)):
+                            dx, dy = x1 - x0, y1 - y0
+                            if math.hypot(dx, dy) <= 0.4:
+                                angle = self.pose[2] + math.radians(camera_yaw_offset_deg)
+                                c, sn = math.cos(angle), math.sin(angle)
+                                camera_translation = (c * dx - sn * dy, sn * dx + c * dy)
+
+            use_visual = False
+            # Konzistentní IMU a kamera: 80 % gyro, 20 % kamera.
+            # Pokud si odporují o více než 10°, kameru ignorujeme.
+            if delta is not None and visual_delta is not None:
+                if abs(delta - visual_delta) <= 10:
+                    delta = 0.8 * delta + 0.2 * visual_delta
+                    use_visual = True
+            elif delta is None and visual_delta is not None:
+                delta = visual_delta
+                use_visual = True
+            pose, score = self._match(xy, delta, camera_translation)
             self.quality = round(score, 2)
             # Nedostatečná shoda se starou mapou -> nezapisovat nové body
             # do nesprávného místa. Pomalejší posun pomáhá obnovit tracking.
@@ -212,9 +259,13 @@ class Slam2D:
                 self.rejected += 1
                 return False
             self.pose = (x, y, (yaw + math.pi) % (2 * math.pi) - math.pi)
-            self.imu_used = delta is not None
+            self.imu_used = delta is not None and imu_heading is not None and self.imu_anchor_deg is not None
             self.imu_delta_deg = round(delta if delta is not None else 0.0, 2)
+            self.visual_used = use_visual
+            self.visual_delta_deg = round(visual_delta if visual_delta is not None else 0.0, 2)
+            self.visual_translation_used = camera_translation is not None
             self.imu_anchor_deg = imu_heading
+            self.visual_anchor = visual_data
             self.accepted += 1
             self._integrate(xy)
             if math.hypot(x - self.path[-1][0], y - self.path[-1][1]) > 0.025:
@@ -247,6 +298,9 @@ class Slam2D:
                 "initialized": self.initialized,
                 "imu_used": self.imu_used,
                 "imu_delta_deg": self.imu_delta_deg,
+                "visual_used": self.visual_used,
+                "visual_delta_deg": self.visual_delta_deg,
+                "visual_translation_used": self.visual_translation_used,
             }
 
     def pgm(self):
