@@ -130,6 +130,25 @@ vizuální odometrií a korekcí translačního pohybu.
 Dokumentace: [MPU-6050](docs/MPU6050.md) a
 [SLAM + IMU](docs/SLAM2D.md). Test IMU: [imu_test.py](tools/imu_test.py).
 
+### Živý obraz: kamera a LiDAR v jednom okně
+
+Nová stránka **/camera** umí zobrazit skutečný CSI obraz s
+průhlednou vrstvou úhlově přiřazených **skutečných vzdáleností** LiDARu.
+Zobrazení je orientační – bez prostorové kalibrace kamery **nejde
+o přesnou AR registraci** a naklánění skeneru stále vyžaduje 3D model.
+
+~~~bash
+cd /opt/lidartest && git pull
+sudo python3 tools/slam_server.py --imu --camera --camera-preview
+~~~
+
+Web: **http://IP_RPI4:8766/camera**; stránka SLAM: `/`,
+360° radar: `/radar`. Náhled je **explicitně opt-in**, přibližně
+5 JPEG snímků/s v paměti, bez nahrávání na disk.
+**Pozor:** HTTP náhled kamery nemá heslo – jen pro důvěryhodnou LAN,
+nevystavovat internetové veřejnosti. Kamera nadále nesmí být
+současně používaná ProjectionLabem.
+
 ## Tři senzory: LiDAR + MPU-6050 + CSI kamera
 
 **Nově připraveno** volitelné propojení CSI kamery do experimentálního
