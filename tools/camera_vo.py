@@ -12,6 +12,50 @@ import threading
 import time
 
 
+class CameraPreview:
+    """Nejnovější JPEG pouze v RAM; aktivní jen při --camera-preview.
+
+    JPEG jde po HTTP do důvěryhodné LAN bez autentizace. Nepoužívat
+    mimo soukromou síť a nikdy nezapisovat snímky na disk.
+    """
+    def __init__(self, quality=70, max_fps=5):
+        self.lock = threading.Lock()
+        self.jpeg = None
+        self.last_timestamp = 0.0
+        self.last_encoded = 0.0
+        self.seq = 0
+        self.quality = int(quality)
+        self.min_interval = 1.0 / max(1, int(max_fps))
+
+    def update(self, frame, timestamp=None):
+        now = time.monotonic() if timestamp is None else float(timestamp)
+        with self.lock:
+            if now - self.last_encoded < self.min_interval:
+                return
+            self.last_encoded = now
+        import cv2
+        import numpy as np
+        rgb = np.ascontiguousarray(frame)
+        if rgb.ndim != 3 or rgb.shape[2] not in (3, 4):
+            return
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR if rgb.shape[2] == 3
+                           else cv2.COLOR_RGBA2BGR)
+        ok, encoded = cv2.imencode(".jpg", bgr,
+                                  [int(cv2.IMWRITE_JPEG_QUALITY), self.quality])
+        if not ok:
+            return
+        with self.lock:
+            self.jpeg = encoded.tobytes()
+            self.last_timestamp = now
+            self.seq += 1
+
+    def latest(self, max_age=2.0):
+        with self.lock:
+            if self.jpeg is None or time.monotonic() - self.last_timestamp > max_age:
+                return None
+            return self.jpeg
+
+
 class VisualOdometry:
     def __init__(self, downward=False, metres_per_pixel=0.0):
         self.lock = threading.RLock()
@@ -169,7 +213,7 @@ class VisualOdometry:
             }
 
 
-def camera_worker(tracker, camera_num=0, fps=10):
+def camera_worker(tracker, camera_num=0, fps=10, preview=None):
     """Jednorázový opt-in pokus o otevření kamery bez přebírání cizích služeb."""
     camera = None
     try:
@@ -184,13 +228,17 @@ def camera_worker(tracker, camera_num=0, fps=10):
         camera.configure(cfg)
         camera.start()
         tracker.set_opened()
-        print("[CAM] Kamera připravena. Zpracovávám pouze optický tok; "
-              "obraz se neukládá ani neposílá do webu.", flush=True)
+        print("[CAM] Kamera připravena. Optický tok aktivní; "
+              + ("JPEG náhled povolen pouze v RAM pro lokální síť."
+                 if preview is not None else "bez přenosu obrazu do webu."),
+              flush=True)
         interval = 1.0 / fps
         while True:
             frame = camera.capture_array()
             stamp = time.monotonic()
             tracker.process_frame(frame, timestamp=stamp)
+            if preview is not None:
+                preview.update(frame, timestamp=stamp)
             time.sleep(max(0.0, interval - (time.monotonic() - stamp)))
     except Exception as exc:
         # Při 'device busy' je kamera nejspíš využívaná ProjectionLabem:
