@@ -22,6 +22,8 @@ class VisualOdometry:
         self.heading_deg = 0.0
         self.x_m = 0.0
         self.y_m = 0.0
+        self.x_px = 0.0
+        self.y_px = 0.0
         self.frames = 0
         self.good_frames = 0
         self.features = 0
@@ -130,13 +132,15 @@ class VisualOdometry:
                 # Znaménko yaw může vyžadovat kalibraci montáže.
                 angle_before = math.radians(self.heading_deg)
                 self.heading_deg += delta
+                # Pixely dostupné i bez měřítka: užitečné pro budoucí
+                # kalibraci na známé délce. Zatím nezasahují do SLAM XY.
+                dx_px = -flow_x
+                dy_px = flow_y
+                self.x_px += math.cos(angle_before) * dx_px - math.sin(angle_before) * dy_px
+                self.y_px += math.sin(angle_before) * dx_px + math.cos(angle_before) * dy_px
                 if self.metres_per_pixel > 0:
-                    # Měření pohybu povrchu je opačné než pohyb kamery.
-                    # Převedení obrazu (x doprava, y dolů) na mapu (x doprava, y nahoru).
-                    dx = -flow_x * self.metres_per_pixel
-                    dy = flow_y * self.metres_per_pixel
-                    self.x_m += math.cos(angle_before) * dx - math.sin(angle_before) * dy
-                    self.y_m += math.sin(angle_before) * dx + math.cos(angle_before) * dy
+                    self.x_m = self.x_px * self.metres_per_pixel
+                    self.y_m = self.y_px * self.metres_per_pixel
 
     def snapshot(self, max_age=0.4):
         with self.lock:
@@ -151,6 +155,8 @@ class VisualOdometry:
                 "heading_deg": round(self.heading_deg, 3) if ready else None,
                 "x_m": round(self.x_m, 5) if ready and self.metres_per_pixel else None,
                 "y_m": round(self.y_m, 5) if ready and self.metres_per_pixel else None,
+                "x_px": round(self.x_px, 2) if ready else None,
+                "y_px": round(self.y_px, 2) if ready else None,
                 "session": self.session,
                 "frames": self.frames,
                 "good_frames": self.good_frames,
