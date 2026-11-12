@@ -36,6 +36,10 @@ class Slam2D:
             self.rejected = 0
             self.quality = 0.0
             self.last_scan = []
+            # Heading z IMU vždy vztahujeme k poslednímu přijatému skenu.
+            self.imu_anchor_deg = None
+            self.imu_used = False
+            self.imu_delta_deg = 0.0
 
     @staticmethod
     def _scan_points(scan):
@@ -92,15 +96,22 @@ class Slam2D:
         penalty = 0.45 * math.hypot(dx, dy) / 0.10 + 0.12 * abs(math.degrees(da)) / 2.0
         return matched - penalty
 
-    def _match(self, xy):
-        prior = self.pose
+    def _match(self, xy, imu_delta_deg=None):
+        if imu_delta_deg is not None:
+            # Gyro změna natočení je predikce scan matcheru, nikoli
+            # náhrada LiDAR měření. LiDAR zpřesní úhel v okolí predikce.
+            prior = (self.pose[0], self.pose[1],
+                     self.pose[2] + math.radians(imu_delta_deg))
+        else:
+            prior = self.pose
         likelihood = self._likelihood()
         # 90 bodů postačuje pro korelaci; hustší paprsky používáme k mapování.
         samples = xy[::2]
         best_pose = prior
         best_score = self._score(samples, likelihood, prior, prior)
         # Hrubé prohledání: +-24 cm a +-6°.
-        for dtheta in (-6, -3, 0, 3, 6):
+        for dtheta in ((-3, -1.5, 0, 1.5, 3) if imu_delta_deg is not None
+                       else (-6, -3, 0, 3, 6)):
             yaw = prior[2] + math.radians(dtheta)
             for dx_cm in (-24, -12, 0, 12, 24):
                 for dy_cm in (-24, -12, 0, 12, 24):
@@ -154,7 +165,12 @@ class Slam2D:
                     cy += stepy
             self.grid[ey, ex] = min(12, int(self.grid[ey, ex]) + 5)
 
-    def process_scan(self, scan):
+    def process_scan(self, scan, imu_heading_deg=None):
+        """Integrace jednoho skenu. IMU heading = relativní gyro Z [°].
+
+        IMU není měření absolutního yaw: změna od posledního přijatého
+        skenu slouží jen jako prior pro korelační odhad LiDARem.
+        """
         result = self._scan_points(scan)
         with self.lock:
             self.scans += 1
@@ -162,14 +178,27 @@ class Slam2D:
                 self.rejected += 1
                 return False
             xy, self.last_scan = result
+            imu_heading = None
+            if imu_heading_deg is not None and math.isfinite(imu_heading_deg):
+                imu_heading = float(imu_heading_deg)
             if not self.initialized:
                 self._integrate(xy)
                 self.initialized = True
                 self.accepted += 1
                 self.quality = 10.0
+                self.imu_anchor_deg = imu_heading
                 return True
 
-            pose, score = self._match(xy)
+            # Po výpadku IMU nesmíme integrovat neznámé otočení:
+            # první návrat IMU pouze synchronizuje referenci.
+            if imu_heading is None:
+                self.imu_anchor_deg = None
+            delta = None
+            if imu_heading is not None and self.imu_anchor_deg is not None:
+                raw_delta = (imu_heading - self.imu_anchor_deg + 180) % 360 - 180
+                if abs(raw_delta) <= 65:
+                    delta = raw_delta
+            pose, score = self._match(xy, delta)
             self.quality = round(score, 2)
             # Nedostatečná shoda se starou mapou -> nezapisovat nové body
             # do nesprávného místa. Pomalejší posun pomáhá obnovit tracking.
@@ -183,6 +212,9 @@ class Slam2D:
                 self.rejected += 1
                 return False
             self.pose = (x, y, (yaw + math.pi) % (2 * math.pi) - math.pi)
+            self.imu_used = delta is not None
+            self.imu_delta_deg = round(delta if delta is not None else 0.0, 2)
+            self.imu_anchor_deg = imu_heading
             self.accepted += 1
             self._integrate(xy)
             if math.hypot(x - self.path[-1][0], y - self.path[-1][1]) > 0.025:
@@ -213,6 +245,8 @@ class Slam2D:
                 "rejected": self.rejected,
                 "quality": self.quality,
                 "initialized": self.initialized,
+                "imu_used": self.imu_used,
+                "imu_delta_deg": self.imu_delta_deg,
             }
 
     def pgm(self):
