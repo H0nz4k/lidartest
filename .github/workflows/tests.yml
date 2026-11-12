@@ -10,8 +10,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install 2D SLAM dependency
-        run: python3 -m pip install --disable-pip-version-check numpy
-      - name: Python parser, radar and SLAM tests (no hardware)
+        run: python3 -m pip install --disable-pip-version-check numpy opencv-python-headless
+      - name: Python LiDAR, IMU, camera and SLAM tests (no hardware)
         run: python3 -m unittest discover -s tools -p 'test_*.py' -v
       - name: Validate radar JavaScript syntax
         run: |
