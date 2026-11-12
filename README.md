@@ -100,6 +100,15 @@ důvěryhodná místní síť**. Kompletní návod:
 protokolu a JavaScriptu prošly. **Fyzické mapování při reálném přesunu
 zatím neověřeno.**
 
+## MPU-6050 – připraveno na propojení
+
+Gyroskop a akcelerometr **MPU-6050** můžou doplnit 2D SLAM o relativní
+natočení mezi skeny. Zatím **není IMU integrována do SLAM**, nejprve
+ověříme I²C komunikaci na Raspberry Pi 4. Připojení: VCC→3V3 (pin 1),
+GND→pin 6, SDA→pin 3 (GPIO2), SCL→pin 5 (GPIO3).
+Úplný návod: [docs/MPU6050.md](docs/MPU6050.md).
+První test: [tools/imu_test.py](tools/imu_test.py).
+
 ## Další kroky
 
 1. Naměřit napětí na vstupním `+`/GND přímo u LiDARu pod zátěží (ověřit skutečných ~5 V).
