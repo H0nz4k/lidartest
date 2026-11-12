@@ -112,3 +112,33 @@ cd /opt/lidartest && git pull && python3 tools/live_map.py
 ```
 
 Z jiného zařízení v LAN otevřít `http://IP_RPI4:8765` (IP: `hostname -I`). Nesmí současně běžet jiný program, který má otevřený `/dev/ttyUSB0`. Server bez autentizace je určen výhradně pro důvěryhodnou lokální síť. Aktuální HW výsledek živého zobrazení zatím **nepotvrzen**.
+
+## 2026-11-12 – CRC dekódování potvrzeno na RPi4 a 2D SLAM připraven
+
+Uživatel úspěšně spustil dekodér po odstranění problému s vlastnictvím Git repozitáře (git pull pod root):
+
+- Port: /dev/ttyUSB0, baudrate **115200**, délka **10 sekund**.
+- **1921 rámců CRC OK, 0 chyb, 23052 bodů, 15866 nenulových vzdáleností**.
+- Průměrná rychlost **637,9 rpm** (min. 633,2, max. 641,3).
+- Data uložena do captures/scan01.csv lokálně na RPi4.
+- To potvrzuje funkčnost průběžného příjmu a správnou strukturu dat, nikoliv absolutní kalibraci.
+
+Nová etapa: připravené skripty tools/slam_core.py, tools/slam_server.py,
+web/slam.html a testy tools/test_slam2d.py.
+SLAM staví occupancy grid z celých otoček a pomocí korelačního
+scan-to-map matching odhaduje x/y/yaw. Má web na portu 8766 a sdílí
+na /radar původní 360° pohled bez druhého otevření CP2102.
+
+**GitHub Actions** (po přidání testu simulovaného pohybu a numpy)
+úspěšně dokončily Python testy i syntaktickou kontrolu JS.
+**Reálné mapování při pohybu LiDARu zatím nebylo spuštěno/ověřeno.**
+Mechanická základna se připravuje; dosavadní podpěra je provizorní.
+
+Další spuštění:
+~~~bash
+sudo apt install -y python3-numpy python3-serial
+sudo git -C /opt/lidartest pull
+sudo python3 /opt/lidartest/tools/slam_server.py
+~~~
+Prohlížeč v LAN: http://IP_RPI4:8766/
+Detaily: docs/SLAM2D.md.
