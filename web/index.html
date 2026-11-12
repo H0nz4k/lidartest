@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d1725">
+  <title>ETA Raggio | Živá 360° mapa</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.4 system-ui,-apple-system,Segoe UI,sans-serif; background:#0d1725; color:#edf5ff; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; }
+    .wrap { max-width:1250px; margin:auto; padding:20px clamp(12px,2.5vw,32px) 48px; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:20px; }
+    h1 { font-size:clamp(1.2rem,2.8vw,1.75rem); margin:0; letter-spacing:-.03em; }
+    .sub { margin:4px 0 0; color:#9bb0c6; font-size:.89rem; }
+    .badge { background:#26394b; border:1px solid #38516c; color:#aabdd4; border-radius:30px; padding:9px 15px; font-size:.8rem; font-weight:700; white-space:nowrap; }
+    .badge.live { background:#093c30; border-color:#1a8065; color:#82e6be; }
+    .layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(220px,290px); gap:18px; align-items:start; }
+    .radar-card { background:linear-gradient(150deg,#15283a,#0e1826 70%); border:1px solid #2d4358; border-radius:22px; padding:14px; overflow:hidden; }
+    .scan-wrap { position:relative; max-width:780px; margin:auto; }
+    canvas { display:block; width:100%; aspect-ratio:1; touch-action:manipulation; cursor:crosshair; }
+    .radar-label { position:absolute; top:8px; left:10px; padding:5px 10px; border-radius:8px; background:#122334bc; color:#9dbcd4; font-size:.75rem; pointer-events:none; }
+    .help { color:#8da4b9; margin:12px 4px 0; font-size:.82rem; }
+    .side { display:grid; gap:14px; min-width:0; }
+    .card { background:#142435; border:1px solid #2c4359; border-radius:18px; padding:16px; }
+    .card h2 { font-size:.88rem; text-transform:uppercase; letter-spacing:.09em; color:#9db1c6; margin:0 0 14px; }
+    .metric { display:flex; align-items:baseline; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid #2b4052; }
+    .metric:last-child { border-bottom:0; }
+    .metric span { color:#afc0d2; font-size:.88rem; }
+    .metric strong { color:#f2f9ff; font-size:1.2rem; font-variant-numeric:tabular-nums; }
+    .control-row { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; font-size:.9rem; }
+    input[type=range] { width:100%; accent-color:#67d7ff; height:32px; }
+    .check { display:flex; align-items:center; gap:10px; min-height:42px; cursor:pointer; color:#bed0e1; font-size:.9rem; }
+    .check input { width:19px; height:19px; accent-color:#63c9f1; }
+    button { width:100%; border:1px solid #378fb4; background:#11445d; color:#e1f7ff; padding:12px 15px; min-height:44px; border-radius:10px; font:inherit; font-weight:650; cursor:pointer; }
+    button:hover { background:#155572; }
+    button:focus-visible, input:focus-visible, canvas:focus-visible { outline:2px solid #83ddff; outline-offset:3px; }
+    .selection { min-height:52px; font-variant-numeric:tabular-nums; color:#c7e9fa; font-size:.88rem; }
+    .muted { font-size:.8rem; color:#91a8bd; }
+    .legend { display:flex; flex-wrap:wrap; gap:16px; font-size:.8rem; color:#a8c1d1; margin:12px 5px 0; }
+    .dot { width:9px; height:9px; display:inline-block; border-radius:50%; margin-right:7px; }
+    .foot { margin-top:20px; color:#849db2; font-size:.81rem; }
+    @media (max-width:760px) {
+      .layout { grid-template-columns:1fr; }
+      .side { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    }
+    @media (max-width:520px) {
+      .wrap { padding-top:12px; }
+      header { margin-bottom:12px; }
+      .side { grid-template-columns:1fr; }
+      .card { padding:14px; }
+      .radar-card { padding:6px; border-radius:16px; }
+      .help { padding:0 6px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>ETA Raggio · 360° LiDAR</h1>
+        <p class="sub">Živá mapa okolí · Raspberry Pi 4 · CP2102 / 115200</p>
+      </div>
+      <div id="status" class="badge" role="status" aria-live="polite">ČEKÁM NA DATA</div>
+    </header>
+
+    <div class="layout">
+      <section class="radar-card" aria-label="Radarový pohled">
+        <div class="scan-wrap">
+          <canvas id="radar" width="720" height="720" tabindex="0"
+                  role="img" aria-label="Živá 360stupňová mapa měřených vzdáleností"></canvas>
+          <span class="radar-label">0° nahoře · relativní orientace</span>
+        </div>
+        <div class="legend">
+          <span><i class="dot" style="background:#5dd5fc"></i>Měřené body</span>
+          <span><i class="dot" style="background:#ffbd69"></i>Blízká překážka &lt; 0,5 m</span>
+          <span><i class="dot" style="background:#e5faff"></i>LiDAR uprostřed</span>
+        </div>
+        <p class="help">Kliknutím nebo klepnutím na bod zobrazíš jeho úhel a vzdálenost. Mapa zobrazuje aktuální měření, neuloženou mapu místnosti.</p>
+      </section>
+
+      <aside class="side">
+        <section class="card" aria-label="Telemetrie">
+          <h2>Telemetrie</h2>
+          <div class="metric"><span>Otáčky</span><strong id="rpm">—</strong></div>
+          <div class="metric"><span>Aktivní body</span><strong id="count">0</strong></div>
+          <div class="metric"><span>Nejbližší překážka</span><strong id="nearest">—</strong></div>
+          <div class="metric"><span>CRC rámce</span><strong id="frames">0</strong></div>
+          <div class="metric"><span>Chyby CRC</span><strong id="errors">0</strong></div>
+          <p id="connection" class="muted" style="margin:12px 0 0">Připojuji k Raspberry Pi…</p>
+        </section>
+
+        <section class="card" aria-label="Zobrazení mapy">
+          <h2>Zobrazení</h2>
+          <div class="control-row">
+            <label for="range">Dosah mapy</label>
+            <strong id="range-value">5 m</strong>
+          </div>
+          <input type="range" id="range" min="2" max="12" step="1" value="5">
+          <label class="check"><input type="checkbox" id="show-dots" checked> Zobrazovat body</label>
+          <label class="check"><input type="checkbox" id="show-lines" checked> Propojovat blízké sousedy</label>
+          <button id="pause" type="button">Pozastavit zobrazení</button>
+          <p class="muted" style="margin-bottom:0">Tlačítko zastaví jen vykreslování v prohlížeči. Čtení LiDARu běží dál.</p>
+        </section>
+
+        <section class="card" aria-label="Vybraný bod">
+          <h2>Vybraný bod</h2>
+          <div id="selection" class="selection" aria-live="polite">Klepni na měřený bod v mapě.</div>
+        </section>
+      </aside>
+    </div>
+    <p class="foot">Body starší než 1,8 s mizí. Radar neovládá motor a nic neposílá do LiDARu. Web je určený pro důvěryhodnou lokální síť.</p>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+  const canvas = document.getElementById("radar");
+  const ctx = canvas.getContext("2d");
+  const slider = document.getElementById("range");
+  const status = document.getElementById("status");
+  const showDots = document.getElementById("show-dots");
+  const showLines = document.getElementById("show-lines");
+  const pauseButton = document.getElementById("pause");
+  let latest = { points: [], rpm:0, frames:0, bad_crc:0, nearest_mm:0, streaming:false };
+  let screenPoints = [];
+  let paused = false;
+  let busy = false;
+  let selected = null;
+
+  const display = (id, value) => { document.getElementById(id).textContent = value; };
+  const cz = (number, digits) => Number(number).toLocaleString("cs-CZ", {maximumFractionDigits:digits || 0});
+
+  function sizeCanvas() {
+    const width = Math.max(200, Math.floor(canvas.getBoundingClientRect().width));
+    const px = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round(width * px);
+    if (canvas.width !== w || canvas.height !== w) {
+      canvas.width = w;
+      canvas.height = w;
+    }
+    ctx.setTransform(px, 0, 0, px, 0, 0);
+    return width;
+  }
+
+  function xy(angle, distance, center, radius, maxDistance) {
+    const radians = angle * Math.PI / 180;
+    const r = Math.min(1, distance / maxDistance) * radius;
+    return { x: center + Math.sin(radians) * r, y: center - Math.cos(radians) * r };
+  }
+
+  function redraw() {
+    const w = sizeCanvas();
+    const c = w / 2, r = w * 0.445;
+    const scale = Number(slider.value) * 1000;
+    ctx.clearRect(0, 0, w, w);
+    ctx.fillStyle = "#0b1724";
+    ctx.beginPath(); ctx.arc(c, c, r + 9, 0, Math.PI * 2); ctx.fill();
+
+    // Soustředné kružnice a kříž; měřítko se mění se sliderem.
+    ctx.lineWidth = 1;
+    for (let i = 1; i <= 4; i++) {
+      const ring = i * r / 4;
+      ctx.strokeStyle = i === 4 ? "#385268" : "#283f55";
+      ctx.beginPath(); ctx.arc(c, c, ring, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = "#839db3";
+      ctx.font = Math.max(11, w * .017) + "px system-ui";
+      const label = (Number(slider.value) * i / 4).toFixed(2).replace(/\.?0+$/, "") + " m";
+      ctx.fillText(label, c + 6, c - ring + 15);
+    }
+    ctx.strokeStyle = "#2b465f";
+    ctx.beginPath();
+    ctx.moveTo(c, c-r); ctx.lineTo(c, c+r);
+    ctx.moveTo(c-r, c); ctx.lineTo(c+r, c); ctx.stroke();
+    ctx.fillStyle = "#afc9db";
+    ctx.font = "12px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("0°", c, c-r-14);
+    ctx.fillText("180°", c, c+r+21);
+    ctx.fillText("270°", c-r-22, c+4);
+    ctx.fillText("90°", c+r+22, c+4);
+    ctx.textAlign = "start";
+
+    const pts = Array.isArray(latest.points) ? latest.points : [];
+    screenPoints = pts
+      .filter(p => p.length >= 3 && p[1] > 0 && p[1] <= scale)
+      .map(p => ({angle:p[0], distance:p[1], intensity:p[2], ...xy(p[0],p[1],c,r,scale)}));
+
+    if (showLines.checked && screenPoints.length > 1) {
+      ctx.strokeStyle = "rgba(84,208,249,.46)";
+      ctx.lineWidth = Math.max(1, w / 440);
+      ctx.beginPath();
+      for (let i = 1; i < screenPoints.length; i++) {
+        const a = screenPoints[i - 1], b = screenPoints[i];
+        if (b.angle - a.angle <= 1.25 && Math.abs(a.distance - b.distance) < 350) {
+          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        }
+      }
+      ctx.stroke();
+    }
+    if (showDots.checked) {
+      for (const p of screenPoints) {
+        ctx.fillStyle = p.distance < 500 ? "#ffbd69" : "#5dd5fc";
+        ctx.beginPath(); ctx.arc(p.x,p.y,Math.max(1.4,w/430),0,Math.PI*2);ctx.fill();
+      }
+    }
+    ctx.fillStyle = "#f3fbff";
+    ctx.beginPath();ctx.arc(c,c,Math.max(3,w/155),0,Math.PI*2);ctx.fill();
+
+    if (selected) {
+      const p = screenPoints.find(p => p.angle === selected.angle);
+      if (p) {
+        ctx.strokeStyle = "#fff6d6";
+        ctx.lineWidth = 2;
+        ctx.beginPath();ctx.arc(p.x,p.y,8,0,Math.PI*2);ctx.stroke();
+      }
+    }
+  }
+
+  function updateStatus() {
+    const live = !!latest.streaming;
+    status.classList.toggle("live", live);
+    status.textContent = live ? "● ŽIVÁ DATA" : "○ BEZ DAT";
+    display("rpm", live ? cz(latest.rpm,1) : "—");
+    display("count", live ? cz(latest.points.length) : "0");
+    display("nearest", live && latest.nearest_mm ? cz(latest.nearest_mm / 1000, 2) + " m" : "—");
+    display("frames", cz(latest.frames));
+    display("errors", cz(latest.bad_crc));
+    display("connection", live ? "UART aktivní · 115200 baud" :
+      (latest.error || "LiDAR zatím neposílá data."));
+  }
+
+  async function refresh() {
+    if (busy || paused) return;
+    busy = true;
+    try {
+      const response = await fetch("/api/scan", {cache:"no-store"});
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      latest = await response.json();
+      updateStatus();
+      redraw();
+    } catch (err) {
+      latest.streaming = false;
+      latest.points = [];
+      latest.error = "Webové spojení: " + err.message;
+      updateStatus();
+      redraw();
+    } finally {
+      busy = false;
+    }
+  }
+
+  function selectAt(event) {
+    const box = canvas.getBoundingClientRect();
+    const x = event.clientX - box.left, y = event.clientY - box.top;
+    let hit = null, distance = 24 * 24;
+    for (const p of screenPoints) {
+      const d = (p.x - x) ** 2 + (p.y - y) ** 2;
+      if (d < distance) { hit = p; distance = d; }
+    }
+    if (hit) {
+      selected = hit;
+      display("selection", cz(hit.angle,1) + "° · " + cz(hit.distance) + " mm · intenzita " + hit.intensity);
+    } else {
+      selected = null;
+      display("selection", "V tomto místě není změřený bod.");
+    }
+    redraw();
+  }
+
+  slider.addEventListener("input", () => {
+    display("range-value", slider.value + " m"); redraw();
+  });
+  showDots.addEventListener("change", redraw);
+  showLines.addEventListener("change", redraw);
+  pauseButton.addEventListener("click", () => {
+    paused = !paused;
+    pauseButton.textContent = paused ? "Pokračovat v zobrazení" : "Pozastavit zobrazení";
+    if (!paused) refresh();
+  });
+  canvas.addEventListener("pointerdown", selectAt);
+  window.addEventListener("resize", redraw);
+  redraw();
+  refresh();
+  setInterval(refresh, 200);
+}());
+</script>
+</body>
+</html>
