@@ -154,7 +154,7 @@ def main():
     p.add_argument("--baud", type=int, default=115200)
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--http-port", type=int, default=8767)
-    p.add_argument("--tilt-axis", choices=("x", "y"), default="x",
+    p.add_argument("--tilt-axis", choices=("x", "y"), default="y",
                    help="x=roll MPU, y=pitch MPU; zvol podle skutečné mechaniky")
     p.add_argument("--tilt-sign", type=int, choices=(-1, 1), default=1)
     p.add_argument("--tilt-step-deg", type=float, default=2.0)
