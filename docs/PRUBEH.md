@@ -254,3 +254,48 @@ změřeno na skutečném Pi4.
 
 Instalace je jen `git pull` a restart tohoto konkrétního
 SLAM procesu. Produkční HUB a ProjectionLab se nemění.
+
+## 2026-11-12 – experimentální stacionární 3D režim je v repozitáři
+
+Uživatel navrhl mechaniku, kde je **spodní základna pevně
+umístěná vůči zemi**, zatímco se **celý LiDAR spolu s MPU-6050 a
+kamerou** naklápí kolem jedné pevné vodorovné osy.
+To redukuje polohovou nejistotu: předpokládáme bez posunu
+základny (X/Y/Z), mění se jediný mechanický úhel.
+
+Implementováno v izolovaném 3D režimu RPi 4:
+- `imu_fusion.py` čte vedle gyro Z také gyro X/Y a akcelerometr,
+  při úvodní nehybné kalibraci odhaduje náklon a následně používá
+  komplementární filtr gravitace a gyra; časovaná orientace
+  obsahuje roll/pitch/yaw v rámci kalibrační session.
+- `cloud3d.py` převádí 2D vzdálenosti LiDARu při známém
+  roll/pitch do XYZ kolem osy X nebo Y, dovoluje korekci známého
+  vektoru od pivotu ke středu LiDARu, odmítá příliš velkou
+  změnu vedlejší osy a chrání paměť omezením bodů.
+- `scan3d_server.py` je samostatná čtečka LiDARu,
+  asociuje časové značky IMU k celé otáčce,
+  provozuje HTTP port **8767**; neotevírá kameru,
+  nemění HUB ani ProjectionLab.
+- `web/cloud3d.html` interaktivní 3D mračno v prohlížeči,
+  pohled otočný myší/prstem, počet bodů, úhel, reset a
+  export PLY (XYZ + intenzita).
+- `test_cloud3d.py` syntetické testy 3D geometrie, pivot
+  offsetu, PLY, limitu bodů a odhadu náklonu.
+- [docs/STATIONARY_3D.md](STATIONARY_3D.md) má kompletní
+  návod na mechaniku, měření a zkoušku.
+
+**Zatím bez skutečné konstrukce**: geometrii a přesnost je
+nutno reálně ověřit; gyro/akcelerometr nepředstavuje měření
+metrické polohy, data se zapisují pouze při změně úhlu po 2°
+a rychlé naklápění může způsobit zkreslení celé otáčky.
+
+Spuštění po ukončení původní 2D UART čtečky:
+
+~~~bash
+sudo git -C /opt/lidartest pull
+sudo python3 /opt/lidartest/tools/scan3d_server.py --tilt-axis y
+~~~
+
+Web: http://IP_RPI4:8767/ .
+Po startu 2,5 sekundy klid; poté naklápět v krocích 2–5°,
+pokud možno v rozsahu ±30° a se zastávkami.
