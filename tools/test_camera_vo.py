@@ -34,7 +34,7 @@ class VisualOdometryTest(unittest.TestCase):
         preview.update(original)
         jpeg = preview.latest()
         self.assertIsNotNone(jpeg)
-        self.assertTrue(jpeg.startswith(b"\\xff\\xd8"))
+        self.assertEqual(tuple(jpeg[:2]), (255, 216))
         self.assertEqual(preview.seq, 1)
         preview.update(original)  # throttling do 5 fps
         self.assertEqual(preview.seq, 1)
