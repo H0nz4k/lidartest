@@ -57,6 +57,23 @@ class VisualOdometryTest(unittest.TestCase):
         self.assertIsNone(result["heading_deg"])
         self.assertEqual(result["mode"], "monitor")
 
+    def test_monitor_capture_is_timestamped_without_enabling_vo(self):
+        tracker = VisualOdometry()
+        tracker.set_opened()
+        original = make_scene()
+        t = time.monotonic()
+        tracker.process_frame(original, t)
+        shifted = cv2.warpAffine(original,
+                                np.float32([[1, 0, 4], [0, 1, -3]]),
+                                (640, 480))
+        tracker.process_frame(shifted, t + .1)
+        synced = tracker.sample_at(t + .11)
+        self.assertIsNotNone(synced)
+        self.assertEqual(synced["mode"], "monitor")
+        self.assertFalse(synced["ready"])
+        self.assertAlmostEqual(synced["sync_ms"], 10.0, delta=.1)
+        self.assertIsNone(tracker.sample_at(t + .4))
+
     def test_downward_optical_flow_yaw_and_optional_metric_scale(self):
         image = make_scene()
         base = time.monotonic()
