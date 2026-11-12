@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
 from pathlib import Path
-from queue import Empty, Full, Queue
+from queue import Queue
 import struct
 import threading
 import time
@@ -22,6 +22,7 @@ from live_map import ScanState
 from slam_core import Slam2D
 from imu_fusion import ImuAngleTracker, imu_reader
 from camera_vo import VisualOdometry, CameraPreview, camera_worker
+from scan_pipeline import PipelineStats, queue_scan
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGE_SLAM = ROOT / "web" / "slam.html"
@@ -41,17 +42,23 @@ class RevolutionAssembler:
         self.rpm = 0.0
 
     def feed(self, data):
-        scans = []
+        """Zpětně kompatibilní parser bez časových značek (offline testy)."""
+        return [points for points, _stamp in self.feed_events(data)]
+
+    def feed_events(self, data, received_at=None):
+        """(body, monotonic čas dokončení otáčky – přibližný UART RX)."""
+        stamp = time.monotonic() if received_at is None else received_at
+        events = []
         self.buffer.extend(data)
         while True:
             pos = self.buffer.find(HEADER)
             if pos < 0:
                 self.buffer[:] = b"\x54" if self.buffer.endswith(b"\x54") else b""
-                return scans
+                return events
             if pos:
                 del self.buffer[:pos]
             if len(self.buffer) < FRAME_LEN:
-                return scans
+                return events
             frame = bytes(self.buffer[:FRAME_LEN])
             if crc8(frame[:-1]) != frame[-1]:
                 self.bad_crc += 1
@@ -66,7 +73,7 @@ class RevolutionAssembler:
 
             if self.prev_start is not None and start < self.prev_start - 15000:
                 if len(self.current) >= 80:
-                    scans.append(self.current)
+                    events.append((self.current, stamp))
                 self.current = []
             self.prev_start = start
 
@@ -103,19 +110,18 @@ class Telemetry:
             }
 
 
-def uart_reader(port, baud, scan_q, radar, telemetry, imu=None, gyro_sign=1,
-                camera=None, camera_yaw_sign=1):
+def uart_reader(port, baud, scan_q, radar, telemetry, stats,
+                imu=None, gyro_sign=1, camera=None, camera_yaw_sign=1):
     try:
         import serial
     except ImportError:
         telemetry.set(False, "Chybí pyserial: sudo apt install python3-serial")
         return
     assembler = RevolutionAssembler()
-    last_enqueued = 0.0
 
     while True:
         try:
-            with serial.Serial(port, baudrate=baud, timeout=0.2,
+            with serial.Serial(port, baudrate=baud, timeout=0.05,
                                xonxoff=False, rtscts=False, dsrdtr=False) as device:
                 telemetry.set(True, "")
                 radar.set_connection(True, "")
@@ -124,34 +130,27 @@ def uart_reader(port, baud, scan_q, radar, telemetry, imu=None, gyro_sign=1,
                 assembler.current.clear()
                 assembler.prev_start = None
                 while True:
-                    data = device.read(2048)
+                    # 256 B ~= 22 ms na 115200 baud. Menší blok omezuje
+                    # časovou nejistotu, dříve 2048 B ~= 178 ms.
+                    data = device.read(256)
                     if not data:
                         continue
+                    scan_at = time.monotonic()
                     telemetry.set(True, "")
                     radar.feed(data)
-                    completed = assembler.feed(data)
-                    for scan in completed:
-                        now = time.monotonic()
-                        if now - last_enqueued < 0.24:
-                            continue
-                        last_enqueued = now
-                        # Gyro odečítat při dokončení skenu, nikoli až po
-                        # čekání ve frontě na pomalejší scan matcher.
-                        imu_data = imu.snapshot() if imu is not None else None
-                        heading = (gyro_sign * imu_data["heading_deg"]
-                                   if imu_data and imu_data["ready"] else None)
-                        camera_data = camera.snapshot() if camera is not None else None
-                        if camera_data is not None and camera_data["ready"]:
+                    completed = assembler.feed_events(data, received_at=scan_at)
+                    for scan, stamp in completed:
+                        # Senzorové měření pro čas dokončení celé otáčky,
+                        # nikoliv nejnovější data až při zpracování mapy.
+                        imu_data = imu.sample_at(stamp) if imu is not None else None
+                        heading = gyro_sign * imu_data["heading_deg"] if imu_data else None
+                        imu_session = imu_data["session"] if imu_data else None
+                        camera_data = camera.sample_at(stamp) if camera is not None else None
+                        if camera_data is not None:
                             camera_data["heading_deg"] *= camera_yaw_sign
-                        item = (scan, heading, camera_data)
-                        try:
-                            scan_q.put_nowait(item)
-                        except Full:
-                            try:
-                                scan_q.get_nowait()
-                            except Empty:
-                                pass
-                            scan_q.put_nowait(item)
+                        stats.received_scan(stamp, imu_data, camera_data)
+                        queue_scan(scan_q, (scan, heading, camera_data, imu_session, stamp),
+                                   stats)
         except (serial.SerialException, OSError) as exc:
             message = f"UART: {exc}"
             telemetry.set(False, message)
@@ -160,20 +159,27 @@ def uart_reader(port, baud, scan_q, radar, telemetry, imu=None, gyro_sign=1,
             time.sleep(2)
 
 
-def mapping_worker(scan_q, slam, camera_yaw_offset_deg=0.0):
+def mapping_worker(scan_q, slam, stats, camera_yaw_offset_deg=0.0):
     while True:
-        scan, imu_heading, visual = scan_q.get()
+        scan, imu_heading, visual, imu_session, stamp = scan_q.get()
+        started = time.monotonic()
+        failed = False
         try:
             slam.process_scan(scan, imu_heading_deg=imu_heading, visual=visual,
-                              camera_yaw_offset_deg=camera_yaw_offset_deg)
+                              camera_yaw_offset_deg=camera_yaw_offset_deg,
+                              imu_session=imu_session)
         except Exception as exc:
+            failed = True
             # Zabránit tichému konci vlákna a zachovat sériový odposlech.
             print(f"[SLAM] Chyba mapování: {exc}", flush=True)
         finally:
+            now = time.monotonic()
+            stats.finished((now - started) * 1000, (now - stamp) * 1000, failed)
             scan_q.task_done()
 
 
-def handler_for(slam, radar, telemetry, imu=None, camera=None, preview=None):
+def handler_for(slam, radar, telemetry, stats=None, scan_q=None,
+                imu=None, camera=None, preview=None):
     class Handler(BaseHTTPRequestHandler):
         def respond(self, code, content, mime, filename=None):
             self.send_response(code)
@@ -220,6 +226,7 @@ def handler_for(slam, radar, telemetry, imu=None, camera=None, preview=None):
                         "imu": imu_data,
                         "camera": camera_data,
                         "camera_preview": preview is not None,
+                        "pipeline": stats.snapshot(scan_q.qsize()) if stats else {},
                         "rpm": scan_status["rpm"],
                         "streaming": scan_status["streaming"],
                         "online": telemetry.snapshot()["online"],
@@ -303,7 +310,8 @@ def main():
     slam = Slam2D()
     radar = ScanState()
     telemetry = Telemetry()
-    scan_q = Queue(maxsize=2)
+    scan_q = Queue(maxsize=8)
+    stats = PipelineStats()
     imu = ImuAngleTracker() if args.imu else None
     camera = (VisualOdometry(downward=args.camera_downward,
                              metres_per_pixel=args.camera_scale)
@@ -321,14 +329,17 @@ def main():
                          daemon=True).start()
     threading.Thread(target=uart_reader,
                      args=(args.port, args.baud, scan_q, radar, telemetry,
-                           imu, args.imu_yaw_sign, camera, args.camera_yaw_sign),
+                           stats, imu, args.imu_yaw_sign, camera, args.camera_yaw_sign),
                      daemon=True).start()
     threading.Thread(target=mapping_worker,
-                     args=(scan_q, slam, args.camera_yaw_offset),
+                     args=(scan_q, slam, stats, args.camera_yaw_offset),
                      daemon=True).start()
 
     server = ThreadingHTTPServer((args.host, args.http_port),
-                                 handler_for(slam, radar, telemetry, imu, camera, preview))
+                                 handler_for(slam, radar, telemetry, stats, scan_q,
+                                             imu, camera, preview))
+    print("[SLAM] Všechny dokončené otáčky předávány bez 240ms gate; "
+          "případný přetlak fronty je započten do /api/slam.", flush=True)
     print(f"[SLAM] http://<IP_RPI4>:{args.http_port}/", flush=True)
     print(f"[RADAR] http://<IP_RPI4>:{args.http_port}/radar", flush=True)
     print(f"[KAMERA] http://<IP_RPI4>:{args.http_port}/camera "
