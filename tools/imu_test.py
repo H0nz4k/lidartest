@@ -5,6 +5,7 @@
 Gyro musí být při úvodní kalibraci bez pohybu. Neovládá LiDAR ani HUB.
 """
 import argparse
+from contextlib import closing
 import statistics
 import struct
 import sys
@@ -58,7 +59,7 @@ def main():
         p.error("Podporovaná adresa: 0x68 nebo 0x69")
 
     try:
-        with SMBus(a.bus) as bus:
+        with closing(SMBus(a.bus)) as bus:
             addr = find_address(bus, a.address)
             print(f"MPU-6050 nalezen: I²C-{a.bus} @ 0x{addr:02X}", flush=True)
             # Probuzení a gyro referenční hodiny.
