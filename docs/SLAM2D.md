@@ -2,7 +2,7 @@
 
 ## Co tato verze umí
 
-Experimentální online 2D SLAM **bez ROS, IMU a enkodérů**. Načítá
+Experimentální online 2D SLAM **bez ROS a enkodérů**; MPU-6050 volitelně. Načítá
 CRC-validní rámce LiDARu (hlavička 54 2C, 47 bajtů, 12 bodů,
 115200 baud), skládá úplné otáčky, porovnává aktuální sken s mapou
 (scan-to-map), odhaduje relativní polohu a úhel a staví **occupancy grid**
@@ -34,6 +34,46 @@ V prohlížeči na počítači/mobilu ve stejné LAN otevři:
 - http://IP_RPI4:8766/radar – původní **živý radar 360°**, sdílí UART.
 
 Ukončení služby: Ctrl+C.
+
+## MPU-6050: gyro + LiDAR fúze (experimentální)
+
+Po úspěšném HW testu MPU-6050 je připravena **volitelná fúze
+relativního natočení**. Gyro Z běží na I²C-1/adrese 0x68; po cca 2,5 s
+kalibraci v klidu predikuje natočení pro korelační scan matching.
+LiDAR dále koriguje odhad podle geometrie místnosti. Není to
+globální orientace ani plnohodnotné LIO/SLAM s loop closure.
+
+**Spuštění s MPU-6050:**
+
+~~~bash
+sudo apt install -y python3-numpy python3-serial python3-smbus
+sudo git -C /opt/lidartest pull
+sudo python3 /opt/lidartest/tools/slam_server.py --imu
+~~~
+
+V prohlížeči otevři `http://IP_RPI4:8766/`, případně původní radar
+na `http://IP_RPI4:8766/radar`. Web obsahuje diagnostiku
+`MPU-6050`, `gyro Z` a `IMU otočení`, a indikuje, zda se IMU
+pro poslední přijatý sken použila. Pokud I²C selže, SLAM zůstane
+v režimu **pouze LiDAR** bez zastavení skenování.
+
+Při každém spuštění nech **celou konstrukci 2,5 sekundy v klidu**.
+MPU musí být pevně přišroubována na *nerotující* základnu LiDARu.
+Je-li na základně orientace osy Z opačná, lze odhad znaménka
+korigovat přepínačem `--imu-yaw-sign -1` (nejdřív ověřit
+fyzickou orientaci a reakci).
+
+**Důležité omezení:** pouze relativní gyro Z, bez de-skew celých skenů,
+bez časové kalibrace senzorů a bez absolutního kompasu. Přesnost
+při pohybu musí být ještě ověřena na skutečné mechanické konstrukci.
+V případě chyby směru yaw se mapa může zhoršit; pro srovnání
+spustit server bez `--imu`.
+
+**Kamera:** Raspberry Pi 4 má připojenou CSI kameru plochým kabelem.
+Zatím se její konfigurace ani snímání nemění. Do budoucna
+lze přidat vizuální odometrii pro korekci X/Y, ale vyžádá si
+synchronizaci kamerových snímků s LiDARem a kalibraci extrinsik.
+Tato implementace žádnou kameru neotevírá.
 
 ## Jak mapovat
 
@@ -88,7 +128,7 @@ GitHub CI ověřilo parser, scan matcher na simulovaných datech a
 syntaxi webových skriptů. **Reálný pohyb LiDARu se SLAMem ještě
 nebyl ověřen.**
 
-Známá omezení: bez IMU a enkodérů drift, bez loop closure kumulace chyby,
+Známá omezení: i s IMU drift X/Y, bez loop closure kumulace chyby,
 bez de-skew zkreslení jednotlivých otáček při rychlém pohybu;
 neznámé fyzické natočení 0° LiDARu.
 
