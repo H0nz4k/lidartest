@@ -1,0 +1,24 @@
+name: LiDAR tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python parser and live map tests (no hardware)
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: Validate radar JavaScript syntax
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("web/index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+          assert len(scripts) == 1, "Expected one inline application script"
+          Path("/tmp/lidartest-radar.js").write_text(scripts[0], encoding="utf-8")
+          PY
+          node --check /tmp/lidartest-radar.js
