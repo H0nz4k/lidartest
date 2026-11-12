@@ -60,3 +60,12 @@ Výsledek skutečného UART odposlechu zatím **neznámý**. Spuštění až po 
 - Uživatel naměřil **0,8 V** při měření datového signálu, dosud ale neupřesnil, zda šlo o RX nebo TX (a zda byl CP2102 napájen). Jediná hodnota z multimetru při UART přenosu **nepotvrzuje** logické úrovně ani bezpečnost zapojení; může jít o průměr proměnného signálu.
 - **Nový stav:** LiDAR se nyní **roztočil**. Příčina rozběhu zatím není potvrzena; RX i TX byly už propojené s CP2102.
 - Další krok: bez posílání inicializačních povelů provést pasivní odposlech `python3 tools/sniff_uart.py --port /dev/ttyUSB0` na Raspberry Pi 4 **až po ověření bezpečných úrovní**, případně pomocí vhodného převodníku úrovní. Zaznamenat výstup a podmínky roztočení; nezasahovat do roztočené mechaniky a nehledět do laserového okénka.
+
+## Napájení LiDARu z USB portu Raspberry Pi 4
+
+**Možné pouze po ověření odběru LiDARu včetně rozběhu motoru.** Raspberry Pi 4 oficiálně poskytuje maximálně **1,2 A dohromady pro všechny USB porty**, nikoli 1,2 A na každém portu. Doporučený zdroj RPi 4 je 5,1 V / 3 A. Proudový odběr tohoto konkrétního LiDARu **zatím není změřen**. Do ověření je bezpečnější samostatný 5V zdroj s proudovým omezením nebo napájený USB hub.
+
+- Lze využít běžný USB-A port RPi 4 pro napájení přes vhodně upravený USB kabel, **ne** napájecí piny CP2102 (jeho `+5V` a `3V3` zůstávají nezapojené).
+- Napájení LiDARu nikdy nepřipojovat současně ze samostatného 5V zdroje i z USB RPi 4. Pro propojení UART musí mít LiDAR a CP2102 společnou zem.
+- Po ověření odběru a zapojení lze na RPi 4 zkontrolovat případné podpětí: `vcgencmd get_throttled` (hodnota `0x0` znamená, že zatím nejsou evidovány problémy s throttlingem/podpětím od startu).
+- Zdroj: oficiální dokumentace Raspberry Pi – <https://www.raspberrypi.com/documentation/computers/raspberry-pi.html>.
