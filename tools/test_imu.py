@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regrese: Debian python3-smbus SMBus není context manager."""
+"""Regrese: Debian SMBus bez context manageru, fallback pro chybný I²C burst."""
 import contextlib
 import importlib.util
 import io
@@ -67,6 +67,58 @@ class TestImuSMBus(unittest.TestCase):
         self.assertEqual(FakeSMBus.instance.bus_id, 1)
         self.assertTrue(FakeSMBus.instance.closed)
         self.assertGreaterEqual(len(FakeSMBus.instance.writes), 5)
+
+
+    def test_bytewise_fallback_when_block_returns_eio(self):
+        fake_package = types.ModuleType("smbus")
+        fake_package.SMBus = FakeSMBus
+        with patch.dict(sys.modules, {"smbus": fake_package}):
+            spec = importlib.util.spec_from_file_location(
+                "imu_bytewise_regression", Path(__file__).with_name("imu_test.py")
+            )
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+        class BytewiseOnly(FakeSMBus):
+            def read_i2c_block_data(self, address, register, length):
+                raise OSError(5, "Input/output error")
+
+            def read_byte_data(self, address, register):
+                if register == 0x75:
+                    return 0x68
+                return bytes(struct.pack(">hhhhhhh", 0, 0, 16384, 0, 0, 0, 0))[register - 0x3B]
+
+        state = {}
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            first = module.read_sample(BytewiseOnly(1), 0x68, state)
+            second = module.read_sample(BytewiseOnly(1), 0x68, state)
+
+        self.assertTrue(state["bytewise"])
+        self.assertAlmostEqual(first["acc_g"][2], 1.0)
+        self.assertAlmostEqual(second["acc_g"][2], 1.0)
+        self.assertEqual(error.getvalue().count("14b I²C čtení selhalo"), 1)
+
+    def test_full_bus_failure_still_reports_error(self):
+        fake_package = types.ModuleType("smbus")
+        fake_package.SMBus = FakeSMBus
+        with patch.dict(sys.modules, {"smbus": fake_package}):
+            spec = importlib.util.spec_from_file_location(
+                "imu_broken_bus", Path(__file__).with_name("imu_test.py")
+            )
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+        class BrokenBus(FakeSMBus):
+            def read_i2c_block_data(self, address, register, length):
+                raise OSError(5, "Input/output error")
+
+            def read_byte_data(self, address, register):
+                raise OSError(5, "Input/output error")
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(OSError):
+                module.read_sample(BrokenBus(1), 0x68, {})
 
 
 if __name__ == "__main__":
