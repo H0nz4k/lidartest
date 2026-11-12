@@ -25,13 +25,29 @@ class ImuAngleTracker:
         self._ready = False
         self._last_time = None
         self._heading_rad = 0.0
+        self._roll_rad = 0.0
+        self._pitch_rad = 0.0
+        self._tilt_ready = False
+        self._gyro_xy_bias = (0.0, 0.0)
         self._bias_dps = 0.0
         self._speed_dps = 0.0
         self._noise_dps = 0.0
         self._samples = 0
         self._error = "Čekám na MPU-6050."
 
-    def calibrate(self, bias_dps, noise_dps, now=None):
+    @staticmethod
+    def inclination(acc):
+        """Směr vektoru zdánlivé gravitace v tělesových osách MPU.
+
+        Předpoklad: při vodorovném modulu čip ukazuje accZ přibližně +1 g.
+        Vrací (roll, pitch) v rad; před rotací platformy musí být
+        osy MPU známy vůči osám měření LiDARu.
+        """
+        ax, ay, az = (float(x) for x in acc)
+        return math.atan2(ay, az), math.atan2(-ax, math.hypot(ay, az))
+
+    def calibrate(self, bias_dps, noise_dps, now=None, accel_g=None,
+                  gyro_xy_bias_dps=(0.0, 0.0)):
         if now is None:
             now = time.monotonic()
         with self.lock:
@@ -40,13 +56,19 @@ class ImuAngleTracker:
             self._bias_dps = float(bias_dps)
             self._noise_dps = float(noise_dps)
             self._heading_rad = 0.0
+            self._gyro_xy_bias = tuple(float(v) for v in gyro_xy_bias_dps)
+            self._tilt_ready = accel_g is not None
+            if self._tilt_ready:
+                self._roll_rad, self._pitch_rad = self.inclination(accel_g)
+            else:
+                self._roll_rad = self._pitch_rad = 0.0
             self._last_time = float(now)
             self._ready = True
             self._speed_dps = 0.0
             self._samples = 0
             self._error = ""
 
-    def add_sample(self, gyro_z_dps, now=None):
+    def add_sample(self, gyro_z_dps, now=None, gyro_xy_dps=None, accel_g=None):
         if now is None:
             now = time.monotonic()
         with self.lock:
@@ -58,10 +80,29 @@ class ImuAngleTracker:
             # Po výpadku se vyhnout extrapolaci přes neznámý pohyb.
             if dt <= 0.15:
                 self._heading_rad += math.radians(velocity) * dt
+                if self._tilt_ready and gyro_xy_dps is not None:
+                    gx = float(gyro_xy_dps[0]) - self._gyro_xy_bias[0]
+                    gy = float(gyro_xy_dps[1]) - self._gyro_xy_bias[1]
+                    self._roll_rad += math.radians(gx) * dt
+                    self._pitch_rad += math.radians(gy) * dt
+                    if accel_g is not None:
+                        norm = math.sqrt(sum(float(v) ** 2 for v in accel_g))
+                        if 0.75 < norm < 1.35:
+                            roll_acc, pitch_acc = self.inclination(accel_g)
+                            # Komplementární filtr: gyro krátkodobě,
+                            # gravitace dlouhodobě. Nepoužívat jako
+                            # plnou 6DoF inerciální odometrii.
+                            alpha = math.exp(-dt / 0.6)
+                            roll_err = (roll_acc - self._roll_rad + math.pi) % (2 * math.pi) - math.pi
+                            pitch_err = (pitch_acc - self._pitch_rad + math.pi) % (2 * math.pi) - math.pi
+                            self._roll_rad += (1 - alpha) * roll_err
+                            self._pitch_rad += (1 - alpha) * pitch_err
             self._speed_dps = velocity
             self._samples += 1
             self.history.add(float(now), {
                 "heading_deg": math.degrees(self._heading_rad),
+                "roll_deg": math.degrees(self._roll_rad) if self._tilt_ready else None,
+                "pitch_deg": math.degrees(self._pitch_rad) if self._tilt_ready else None,
                 "rate_dps": velocity, "session": self._session,
             })
 
@@ -92,6 +133,9 @@ class ImuAngleTracker:
                 "ready": ready,
                 "heading_deg": math.degrees(self._heading_rad) if ready else None,
                 "rate_dps": round(self._speed_dps, 3) if ready else None,
+                "roll_deg": round(math.degrees(self._roll_rad), 2) if ready and self._tilt_ready else None,
+                "pitch_deg": round(math.degrees(self._pitch_rad), 2) if ready and self._tilt_ready else None,
+                "tilt_ready": bool(ready and self._tilt_ready),
                 "bias_dps": round(self._bias_dps, 3) if self._samples else None,
                 "noise_dps": round(self._noise_dps, 3) if self._samples else None,
                 "samples": self._samples,
@@ -130,14 +174,26 @@ def imu_reader(tracker, bus_id=1, address=0x68, calibration_s=2.5,
                       flush=True)
                 state = {}
                 readings = []
+                accelerations = []
                 finish = time.monotonic() + calibration_s
                 while time.monotonic() < finish:
-                    readings.append(read_sample(bus, addr, state)["gyro_dps"][2])
+                    sample = read_sample(bus, addr, state)
+                    readings.append(sample["gyro_dps"])
+                    accelerations.append(sample["acc_g"])
                     time.sleep(sample_interval)
                 if len(readings) < 30:
                     raise OSError("Příliš málo gyro vzorků při kalibraci")
-                bias = statistics.mean(readings)
-                noise = statistics.pstdev(readings)
+                bias_xyz = tuple(statistics.mean(row[k] for row in readings)
+                                 for k in range(3))
+                noise_xyz = tuple(statistics.pstdev(row[k] for row in readings)
+                                  for k in range(3))
+                bias = bias_xyz[2]
+                noise = max(noise_xyz)
+                gravity = tuple(statistics.mean(row[k] for row in accelerations)
+                                for k in range(3))
+                g = math.sqrt(sum(v * v for v in gravity))
+                if not 0.75 < g < 1.35:
+                    raise OSError(f"Kalibrace náklonu: nestandardní gravitace {g:.2f}g")
                 if noise > 1.5:
                     tracker.set_error(
                         f"Kalibrace je nestabilní ({noise:.2f} °/s): nehýbej konstrukcí."
@@ -148,12 +204,15 @@ def imu_reader(tracker, bus_id=1, address=0x68, calibration_s=2.5,
                         return
                     continue
 
-                tracker.calibrate(bias, noise)
+                tracker.calibrate(bias, noise, accel_g=gravity,
+                                  gyro_xy_bias_dps=bias_xyz[:2])
                 print(f"[IMU] Aktivní 0x{addr:02x}, bias Z={bias:+.3f} °/s, "
                       f"šum={noise:.3f} °/s", flush=True)
                 while True:
-                    raw_z = read_sample(bus, addr, state)["gyro_dps"][2]
-                    tracker.add_sample(raw_z)
+                    sample = read_sample(bus, addr, state)
+                    gx, gy, gz = sample["gyro_dps"]
+                    tracker.add_sample(gz, gyro_xy_dps=(gx, gy),
+                                       accel_g=sample["acc_g"])
                     time.sleep(sample_interval)
 
         except OSError as exc:
