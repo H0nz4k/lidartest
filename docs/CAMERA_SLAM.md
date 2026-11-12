@@ -10,8 +10,42 @@ se nasazováním nemění.
 
 Systém používá jedinou UART čtečku pro LiDAR, samostatné vlákno pro
 MPU-6050 (I²C) a **volitelné** vlákno kamery (libcamera/Picamera2).
-Snímky se **neukládají na disk ani nevystavují přes web**. Z obrazu
-se počítají pouze optické body, jejich pohyb a geometrická shoda.
+Snímky se **neukládají na disk**. Do webu se obraz přenáší **pouze při výslovném zapnutí** `--camera-preview`; jinak se počítají pouze optické body, jejich pohyb a geometrická shoda.
+
+
+## Živá CSI kamera + orientační LiDAR překryv (novinka)
+
+Ve webu je nová záložka **Kamera + LiDAR** na adrese
+`http://IP_RPI4:8766/camera`. Ve výchozím stavu kamera zůstává skrytá:
+**živé JPEG snímky** jsou přístupné pouze po explicitním přepínači
+`--camera-preview` současně s `--camera`.
+
+~~~bash
+sudo apt install -y python3-opencv python3-picamera2
+cd /opt/lidartest && git pull
+sudo python3 tools/slam_server.py --imu --camera --camera-preview
+~~~
+
+Obraz je z CSI, program ho drží pouze v RAM (cca 5 fps, 640×480).
+Překryv používá **skutečně naměřené vzdálenosti** 360° LiDARu,
+ale projekce měření do obrazu je **pouze orientační úhlový model
+jedné vodorovné roviny**, nikoliv prostorově kalibrovaná AR:
+- **Směr středu kamery v LiDARu**: orientační nastavení natočení 0–359°.
+- **Horizontální zorné pole**: odhad podle objektivu, 25–110°.
+- **Průhlednost vrstvy** a volitelné propojování blízkých paprsků.
+- Dotykem LiDAR bodu zobrazit skutečnou vzdálenost a úhel.
+
+Při naklápění celé konstrukce je současná **2D mapa zkreslená**:
+body se stále projekují do horizontální roviny. Skutečná 3D registrace
+potřebuje kalibraci kamery (intrinsiky/distortion), vzájemné polohy a
+natočení kamery vůči LiDARu (extrinsiky), časovou synchronizaci a
+6DoF lokalizaci. Neprezentovat tento překryv jako přesné 3D mapování.
+
+**Bezpečnost soukromí:** JPEG endpoint `/api/camera.jpg` nemá
+autentizaci. Používat **výhradně v důvěryhodné LAN**, neotvírat port
+8766 do internetu a neprovozovat bez `--camera-preview`, pokud
+obraz nechceš zpřístupnit. Snímky nejsou zapisovány na disk.
+Kamera se nepřebírá, pokud ji používá ProjectionLab.
 
 ## Respektování ProjectionLabu
 
