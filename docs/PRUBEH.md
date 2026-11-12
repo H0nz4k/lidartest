@@ -69,3 +69,28 @@ Výsledek skutečného UART odposlechu zatím **neznámý**. Spuštění až po 
 - Napájení LiDARu nikdy nepřipojovat současně ze samostatného 5V zdroje i z USB RPi 4. Pro propojení UART musí mít LiDAR a CP2102 společnou zem.
 - Po ověření odběru a zapojení lze na RPi 4 zkontrolovat případné podpětí: `vcgencmd get_throttled` (hodnota `0x0` znamená, že zatím nejsou evidovány problémy s throttlingem/podpětím od startu).
 - Zdroj: oficiální dokumentace Raspberry Pi – <https://www.raspberrypi.com/documentation/computers/raspberry-pi.html>.
+
+## 2026-11-12 – PRVNÍ ÚSPĚŠNÁ KOMUNIKACE (01:43)
+
+Uživatel poslal kompletní textový log ze spuštění `python3 tools/sniff_uart.py --port /dev/ttyUSB0` na Raspberry Pi 4.
+
+- První pokus skončil hlášením `device reports readiness to read but returned no data` (pravděpodobné přechodné odpojení / reset USB); druhý už vysílal souvislá data.
+- Nastavení **115200 baud**, `/dev/ttyUSB0`.
+- Během ~6,1 sekundy zachyceno **54 272 bajtů / 212 vypsaných bloků** (potom Ctrl+C).
+- V binárním proudu nalezeno **1 154 rámců s hlavičkou `54 2C`**, **všech 1 154 prošlo CRC-8 (poly 0x4D)**. Jde o rámec rodiny **LDROBOT LD06/LD19, 47 bajtů, 12 měření**. Konkrétní HW stále označen `LD00_L7`; shoda protokolu sama neprokazuje identický model.
+- Celkem **13 848 měření**, z toho **8 841 nenulových vzdáleností**. Dosavadní jednotky: vzdálenost v mm, intenzita 0–255, úhel v setinách stupně.
+- Údaj rychlosti v rámcích odpovídá přibližně **617,8 ot./min** (cca 10,3 ot./s, rozsah 612,3–622,0 ot./min); jde o hodnotu vysílanou LiDARem, nikoli nezávislé tachometrické měření.
+- Například první platný rámec: start úhel 183,70°, konec 201,69°, vzdálenosti prvních bodů 610, 611, 616, 622 mm; CRC platí.
+- Důkaz platného protokolu je výrazně silnější než samotné HEX bajty: v podstatě celé zachycené měření tvoří úplné a CRC-validní rámce.
+- **Dosud není ověřena elektrická úroveň 3,3 V osciloskopem ani změřen proud při rozběhu.** Neodvozovat elektrickou bezpečnost pouze z úspěšného UART odposlechu.
+
+Další nástroj na GitHubu: [`tools/decode_lidar.py`](../tools/decode_lidar.py). Dekóduje CRC-validní rámce do `angle_deg`, `distance_mm`, `intensity`, `rpm`, `timestamp_ms` a volitelně ukládá CSV. Neodesílá příkazy.
+
+```bash
+cd /opt/lidartest && git pull
+python3 tools/decode_lidar.py --port /dev/ttyUSB0 --seconds 10 --csv captures/scan01.csv
+```
+
+Pro kontrolu dekodéru bez hardwaru: `python3 -m unittest discover -s tools -p 'test_*.py'`. Jednotkový test používá **skutečný první rámec** ze zaslaného odposlechu. Výsledky reálného běhu nového dekodéru je potřeba ještě ověřit na RPi 4.
+
+Protokol: <https://github.com/ldrobotSensorTeam/ldlidar_stl_ros2/blob/master/ldlidar_driver/include/dataprocess/lipkg.h> a dokumentace LD19 v2.5.
