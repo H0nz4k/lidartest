@@ -13,7 +13,12 @@ nav a[aria-current=page]{background:#114c67;border-color:#2a819f}
 .layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(235px,285px);gap:14px;align-items:start}
 .box,.card{background:#142739;border:1px solid #2e4559;border-radius:16px;overflow:hidden}.card{padding:16px}.side{display:grid;gap:13px}
 .stage{position:relative;background:#0c1b2a;aspect-ratio:4/3;overflow:hidden}
-#camera{width:100%;height:100%;display:block;object-fit:contain}
+.stage[data-rotation="90"],.stage[data-rotation="270"]{aspect-ratio:3/4}
+#camera{position:absolute;top:50%;left:50%;width:100%;height:100%;display:block;object-fit:contain;transform:translate(-50%,-50%) rotate(0deg);transform-origin:center}
+.stage[data-rotation="90"] #camera,.stage[data-rotation="270"] #camera{width:133.333333%;height:75%}
+.stage[data-rotation="90"] #camera{transform:translate(-50%,-50%) rotate(90deg)}
+.stage[data-rotation="180"] #camera{transform:translate(-50%,-50%) rotate(180deg)}
+.stage[data-rotation="270"] #camera{transform:translate(-50%,-50%) rotate(270deg)}
 #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:auto;cursor:crosshair;touch-action:manipulation}
 .floating{position:absolute;left:10px;top:10px;background:#0a1826d9;border:1px solid #32485e;padding:6px 10px;color:#daf0fc;border-radius:9px;font-size:.78rem;pointer-events:none;max-width:calc(100% - 20px)}
 .legend{display:flex;flex-wrap:wrap;gap:12px;padding:12px 14px;font-size:.82rem;color:#b4ccdb}
@@ -28,7 +33,8 @@ input[type=range]{width:100%;min-height:28px;accent-color:#69caef}
 .check input{width:19px;height:19px;accent-color:#6bd1ed}
 .status{font-size:.8rem;color:#91acc0}.picked{min-height:48px;font-size:.86rem;color:#bdddeb}
 button{font:inherit;font-weight:650;background:#14526b;color:#e8faff;border:1px solid #3686a2;border-radius:10px;padding:11px;width:100%;min-height:44px;cursor:pointer}
-button:focus-visible,input:focus-visible,nav a:focus-visible{outline:2px solid #9ae4ff;outline-offset:2px}
+select{width:100%;min-height:44px;padding:9px 12px;margin-top:8px;border:1px solid #355168;border-radius:10px;background:#0e2030;color:#e9f7ff;font:inherit;font-size:.94rem}
+button:focus-visible,input:focus-visible,select:focus-visible,nav a:focus-visible{outline:2px solid #9ae4ff;outline-offset:2px}
 footer{font-size:.8rem;color:#91aabc;margin-top:14px}
 @media(max-width:790px){.layout{grid-template-columns:1fr}.side{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.side{grid-template-columns:1fr}.wrap{padding-top:12px}.floating{font-size:.71rem;left:6px;top:6px}}
@@ -43,9 +49,9 @@ footer{font-size:.8rem;color:#91aabc;margin-top:14px}
 <div class="layout">
 <section>
 <div class="box">
-<div class="stage">
+<div class="stage" id="stage" data-rotation="90">
 <img id="camera" alt="Živý CSI obraz; zobrazí se pouze po výslovném povolení náhledu">
-<canvas id="overlay" width="640" height="480" aria-label="Orientační LiDAR body ve videoobrazu; klepnutím vyberete vzdálenost"></canvas>
+<canvas id="overlay" width="480" height="640" aria-label="Orientační LiDAR body ve videoobrazu; klepnutím vyberete vzdálenost"></canvas>
 <div class="floating" id="camera-note">Čekám na obraz…</div>
 </div>
 <div class="legend"><span><i class="dot" style="background:#67d5ff"></i>Vzdálenost ≥ 1 m</span><span><i class="dot" style="background:#ffbe75"></i>Vzdálenost &lt; 1 m</span><span><i class="dot" style="background:#8beaaf"></i>Osa kamery – odhad</span></div>
@@ -66,10 +72,18 @@ footer{font-size:.8rem;color:#91aabc;margin-top:14px}
 <p class="status" id="error" aria-live="polite"></p>
 </section>
 <section class="card">
-<h2>Orientační překryv</h2>
+<h2>Obraz kamery</h2>
+<label class="range" for="rotation"><span>Otočení živého obrazu</span><b id="rotation-val">90° vpravo</b></label>
+<select id="rotation" aria-label="Otočení živého obrazu">
+  <option value="0">0° – bez otočení</option>
+  <option value="90" selected>90° vpravo</option>
+  <option value="180">180°</option>
+  <option value="270">90° vlevo</option>
+</select>
+<h2 style="margin-top:18px">Orientační překryv</h2>
 <label class="range" for="heading"><span>Směr středu kamery v LiDARu</span><b id="heading-val">0°</b></label>
 <input id="heading" type="range" min="0" max="359" step="1" value="0">
-<label class="range" for="fov"><span>Odhad horizontálního FOV kamery</span><b id="fov-val">65°</b></label>
+<label class="range" for="fov"><span>Odhad FOV ve směru LiDAR vrstvy</span><b id="fov-val">65°</b></label>
 <input id="fov" type="range" min="25" max="110" step="1" value="65">
 <label class="range" for="opacity"><span>Průhlednost bodů</span><b id="opacity-val">75 %</b></label>
 <input id="opacity" type="range" min="10" max="100" step="5" value="75">
@@ -87,14 +101,27 @@ footer{font-size:.8rem;color:#91aabc;margin-top:14px}
   "use strict";
   const get = id => document.getElementById(id);
   const c = get("overlay"), ctx = c.getContext("2d");
-  const image = get("camera");
+  const image = get("camera"), stage = get("stage"), rotation = get("rotation");
+  const validAngles = new Set(["0","90","180","270"]);
   let scan = [], status = null, markers = [], paused = false, loading = false;
   let stamp = 0, hasImage = false, imageBusy = false;
   function text(id, value) { get(id).textContent = value; }
   function fmt(n, decimals=1) { return Number(n).toLocaleString("cs-CZ",{maximumFractionDigits:decimals}); }
   function angleDiff(a,b) { return ((a-b+540)%360)-180; }
+  function rotateView(value) {
+    const angle = validAngles.has(String(value)) ? String(value) : "90";
+    stage.dataset.rotation = angle;
+    rotation.value = angle;
+    text("rotation-val",angle==="90"?"90° vpravo":angle==="270"?"90° vlevo":angle+"°");
+    const portrait = angle==="90" || angle==="270";
+    c.width = portrait ? 480 : 640;
+    c.height = portrait ? 640 : 480;
+    // LiDAR body se počítají přímo v orientaci výsledné obrazovky;
+    // nejde o kalibrovanou projekci do optiky kamery.
+    render();
+  }
   function render() {
-    const w=640,h=480, midX=w/2, midY=h*.53;
+    const w=c.width,h=c.height, midX=w/2, midY=h*.53;
     ctx.clearRect(0,0,w,h);
     markers=[];
     if(!get("overlay-enabled").checked) return;
@@ -132,8 +159,8 @@ footer{font-size:.8rem;color:#91aabc;margin-top:14px}
   }
   c.addEventListener("pointerdown",e=>{
     const rect=c.getBoundingClientRect();
-    const x=(e.clientX-rect.left)*640/rect.width;
-    const y=(e.clientY-rect.top)*480/rect.height;
+    const x=(e.clientX-rect.left)*c.width/rect.width;
+    const y=(e.clientY-rect.top)*c.height/rect.height;
     let best=null,d=22*22;
     for(const p of markers) {
       const dist=(p.x-x)**2+(p.y-y)**2;
@@ -142,6 +169,11 @@ footer{font-size:.8rem;color:#91aabc;margin-top:14px}
     text("selected",best?
       fmt(best.angle,2)+"° · "+fmt(best.d/1000,3)+" m · intenzita "+fmt(best.intensity,0):
       "Zde není vybraný LiDAR bod.");
+  });
+  rotation.addEventListener("change",()=>{
+    rotateView(rotation.value);
+    try { window.localStorage.setItem("lidartest-camera-rotation",rotation.value); }
+    catch(_error) { /* prohlížeč může zakázat perzistenci */ }
   });
   for(const id of ["heading","fov","opacity","overlay-enabled","show-rays"]){
     get(id).addEventListener("input",()=>{
@@ -199,7 +231,12 @@ footer{font-size:.8rem;color:#91aabc;margin-top:14px}
     }finally{loading=false;}
   }
   text("heading-val","0°");text("fov-val","65°");text("opacity-val","75 %");
-  image.style.visibility="hidden";render();refresh();setInterval(refresh,400);
+  let savedRotation = "90";
+  try { savedRotation = window.localStorage.getItem("lidartest-camera-rotation") || "90"; }
+  catch(_error) { /* bez uložené volby používáme 90° */ }
+  image.style.visibility="hidden";
+  rotateView(savedRotation);
+  refresh();setInterval(refresh,400);
 })();
 </script>
 </body>
